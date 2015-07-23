@@ -7,7 +7,7 @@ Project {
         name: "sqlite3"
         Depends {name: "cpp"}
         Depends{name: "stellar_qbs_module"}
-        readonly property path baseDirectory: stellar_qbs_module.srcDirectory + "/lib/sqlite"
+        readonly property path baseDirectory: stellar_qbs_module.rootDirectory + "/lib/sqlite"
 
         cpp.windowsApiCharacterSet: "mbcs"
 
@@ -24,7 +24,7 @@ Project {
         Depends{name: "stellar_qbs_module"}
         Depends{name: "sqlite3"}
         Depends{name: "libsoci"}
-        readonly property path baseDirectory: stellar_qbs_module.srcDirectory + "/lib/soci"
+        readonly property path baseDirectory: stellar_qbs_module.rootDirectory + "/lib/soci"
         readonly property path srcDirectory: baseDirectory + "/src/backends/sqlite3"
 
         cpp.windowsApiCharacterSet: "mbcs"
@@ -52,7 +52,7 @@ Project {
 
         Depends {name: "cpp"}
         Depends{name: "stellar_qbs_module"}
-        readonly property path baseDirectory: stellar_qbs_module.srcDirectory + "/lib/soci"
+        readonly property path baseDirectory: stellar_qbs_module.rootDirectory + "/lib/soci"
         readonly property path srcDirectory: baseDirectory + "/src/core"
 
         cpp.includePaths: [srcDirectory]

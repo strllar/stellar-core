@@ -5,7 +5,7 @@ StaticLibrary {
 
     Depends {name: "cpp"}
     Depends{name: "stellar_qbs_module"}
-    readonly property path baseDirectory: stellar_qbs_module.srcDirectory + "/lib/libmedida"
+    readonly property path baseDirectory: stellar_qbs_module.rootDirectory + "/lib/libmedida"
     readonly property path srcDirectory: baseDirectory + "/src"
 
     cpp.windowsApiCharacterSet: "mbcs"

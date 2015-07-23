@@ -13,7 +13,7 @@ Project {
 
         Depends{name: "stellar_qbs_module"}
 
-        readonly property path buildEndianFile: stellar_qbs_module.srcDirectory + "/lib/xdrpp" +"/xdrpp/build_endian.h.in"
+        readonly property path buildEndianFile: stellar_qbs_module.rootDirectory + "/lib/xdrpp" +"/xdrpp/build_endian.h.in"
 
         Transformer {
             inputs: [buildEndianFile]
@@ -56,7 +56,7 @@ Project {
         name: "xdrc"
         Depends {name: "stellar_qbs_module"}
         Depends { name: "build_endian_header"}
-        readonly property path baseDirectory: stellar_qbs_module.srcDirectory + "/lib/xdrpp"
+        readonly property path baseDirectory: stellar_qbs_module.rootDirectory + "/lib/xdrpp"
         cpp.includePaths: [baseDirectory, baseDirectory+"/msvc_xdrpp/include"]
         cpp.windowsApiCharacterSet: "mbcs"
 
@@ -134,7 +134,7 @@ Project {
         Depends {name: "cpp"}
         Depends {name: "build_endian_header"}
         Depends{name: "stellar_qbs_module"}
-        readonly property path baseDirectory: stellar_qbs_module.srcDirectory + "/lib/xdrpp"
+        readonly property path baseDirectory: stellar_qbs_module.rootDirectory + "/lib/xdrpp"
 
         cpp.includePaths: [baseDirectory]
         cpp.windowsApiCharacterSet: "mbcs"
