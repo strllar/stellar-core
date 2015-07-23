@@ -7,7 +7,7 @@ StaticLibrary {
 
     Depends {name: "cpp"}
     Depends{name: "stellar_qbs_module"}
-    readonly property path baseDirectory: stellar_qbs_module.srcDirectory + "/lib/libsodium"
+    readonly property path baseDirectory: stellar_qbs_module.rootDirectory + "/lib/libsodium"
     readonly property path srcDirectory: baseDirectory + "/src/libsodium"
     readonly property path version_header: baseDirectory + "/builds/msvc/version.h"
 
