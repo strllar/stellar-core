@@ -24,6 +24,7 @@ Project {
 
         Export {
             Depends { name: "cpp" }
+            cpp.windowsApiCharacterSet: "mbcs"
             cpp.includePaths: product.buildDirectory
         }
 
