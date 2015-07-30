@@ -48,6 +48,7 @@ Project {
 
         Export {
             Depends { name: "cpp" }
+            cpp.windowsApiCharacterSet: "mbcs"
             cpp.includePaths: product.buildDirectory
         }
     }
@@ -148,6 +149,7 @@ Project {
         Export {
             Depends { name: "cpp" }
             Depends {name: "build_endian_header"}
+            cpp.windowsApiCharacterSet: "mbcs"
             cpp.includePaths: [baseDirectory]
         }
 
