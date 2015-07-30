@@ -14,6 +14,7 @@ Project {
         files: [baseDirectory+"/sqlite3.c"]
         Export {
             Depends {name: "cpp"}
+            cpp.windowsApiCharacterSet: "mbcs"
             cpp.includePaths: [baseDirectory]
         }
     }
@@ -56,6 +57,7 @@ Project {
         readonly property path srcDirectory: baseDirectory + "/src/core"
 
         cpp.includePaths: [srcDirectory]
+        cpp.windowsApiCharacterSet: "mbcs"
 
         Group {
             name: "C++ Sources"
@@ -85,6 +87,7 @@ Project {
 
         Export {
             Depends { name: "cpp" }
+            cpp.windowsApiCharacterSet: "mbcs"
             cpp.includePaths: [srcDirectory]
         }
     }
