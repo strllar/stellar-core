@@ -654,7 +654,7 @@ CatchupStateMachine::finishVerifyingState(
     case HistoryManager::VERIFY_HASH_BAD:
         CLOG(ERROR, "History")
             << "Catchup material failed verification, propagating failure";
-        mError = std::make_error_code(std::errc::bad_message);
+        mError = std::make_error_code(std::errc::illegal_byte_sequence);
         enterEndState();
         break;
     case HistoryManager::VERIFY_HASH_UNKNOWN:
@@ -789,7 +789,7 @@ CatchupStateMachine::enterApplyingState()
     catch (std::runtime_error& e)
     {
         CLOG(ERROR, "History") << "Error during apply: " << e.what();
-        mError = std::make_error_code(std::errc::bad_message);
+        mError = std::make_error_code(std::errc::illegal_byte_sequence);
         enterEndState();
     }
 }
@@ -838,7 +838,7 @@ CatchupStateMachine::advanceApplyingState(std::shared_ptr<ApplyState> state)
     catch (std::runtime_error& e)
     {
         CLOG(ERROR, "History") << "Error during apply: " << e.what();
-        mError = std::make_error_code(std::errc::bad_message);
+        mError = std::make_error_code(std::errc::illegal_byte_sequence);
     }
 
     if (keepGoing)
