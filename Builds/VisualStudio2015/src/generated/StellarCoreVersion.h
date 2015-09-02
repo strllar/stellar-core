@@ -1,1 +1,1 @@
-#define STELLAR_CORE_VERSION "unknown-msvc"
+#define STELLAR_CORE_VERSION "klm-head-mingw"
