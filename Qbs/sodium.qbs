@@ -197,6 +197,6 @@ StaticLibrary {
     Export {
         Depends { name: "cpp" }
         cpp.windowsApiCharacterSet: "mbcs"
-        cpp.includePaths: [destinationDirectory, srcDirectory + "/include", srcDirectory + "/include/sodium"]
+        cpp.includePaths: [product.destinationDirectory, product.srcDirectory + "/include", product.srcDirectory + "/include/sodium"]
     }
 }

@@ -150,7 +150,7 @@ Project {
             Depends { name: "cpp" }
             Depends {name: "build_endian_header"}
             cpp.windowsApiCharacterSet: "mbcs"
-            cpp.includePaths: [baseDirectory]
+            cpp.includePaths: [product.baseDirectory]
         }
 
     }
