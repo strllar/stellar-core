@@ -166,11 +166,54 @@ LedgerManagerImpl::startNewLedger()
 
     LedgerDelta delta(genesisHeader, getDatabase());
     masterAccount.storeAdd(delta, this->getDatabase());
+
     delta.commit();
 
     mCurrentLedger = make_shared<LedgerHeaderFrame>(genesisHeader);
     CLOG(INFO, "Ledger") << "Established genesis ledger, closing";
     CLOG(INFO, "Ledger") << "Root account seed: " << skey.getStrKeySeed();
+
+    {
+        auto txbin = hexToBin("00000000d4dabeadbcc3c0a7c4d1c3e6c7b0a3ac00000000000000000000000000000000ee6b2800000000000000000100000001000000004910e200000000004aa8418000000000000000010000000100000000d0c5d0c4b1c8bbc6bdf0bacdbbf5b1d2b8fcd6d8d2aaa1a30000000000000000000000090000000000000000");
+
+        TransactionEnvelope txenv;
+        xdr::xdr_from_opaque<TransactionEnvelope>(txbin, txenv);
+
+        auto txframe = TransactionFrame::makeTransactionFromWire(mApp.getNetworkID(), txenv);
+
+        Operation op;
+        op.body.type(INFLATION);
+
+        TransactionMeta tm;
+        TransactionResultSet trs;
+
+
+        OperationResult opr;
+        opr.code(opINNER);
+        opr.tr().type(op.body.type());
+        opr.tr().inflationResult().code(INFLATION_SUCCESS);
+
+        PublicKey pk; //
+        auto k = hexToBin("d6d0b9fabeadbcc3d2d1bdf8c8ebd0c2b3a3ccaca3acd4f6cbd9d4a4bcc6bdab");
+        std::copy(k.begin(), k.end(), pk.ed25519().begin());
+        opr.tr().inflationResult().payouts().emplace_back(pk, 0LL);
+        k = hexToBin("b1a3b3d6d4da3725d7f3d3d2a3acb2a2c7d2d5e2d2bbd7b4ccacbfc9c4dcb3d6");
+        std::copy(k.begin(), k.end(), pk.ed25519().begin());
+        opr.tr().inflationResult().payouts().emplace_back(pk, 0LL);
+        std::fill(pk.ed25519().begin(), pk.ed25519().end(), 0);
+        k = hexToBin("d0f834b5bd35c4eab5c4cab1bce4a1a3");
+        std::copy(k.begin(), k.end(), pk.ed25519().begin());
+        opr.tr().inflationResult().payouts().emplace_back(pk, 0LL);
+        opr.tr().inflationResult().payouts().emplace_back(skey.getPublicKey(), masterAccount.getAccount().balance);
+
+
+        txframe->getResult().feeCharged = (4000000000000LL);
+        txframe->getResult().result.code(txFAILED);
+        txframe->getResult().result.results().push_back(opr);
+
+        txframe->storeTransaction(*this, delta, tm, 1, trs);
+    }
+
     closeLedgerHelper(delta);
 }
 
