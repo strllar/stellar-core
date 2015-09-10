@@ -24,6 +24,7 @@ Config::Config() : NODE_SEED(SecretKey::random())
     VERSION_STR = STELLAR_CORE_VERSION;
     DESIRED_BASE_RESERVE = 100000000;
 
+    NETWORK_PASSPHRASE = "KLM is a Kilo of xLM; Strllar is an awesome copycat Stellar.";
     // configurable
     RUN_STANDALONE = false;
     MANUAL_CLOSE = false;
@@ -553,6 +554,7 @@ Config::load(std::string const& filename)
             }
             else if (item.first == "NETWORK_PASSPHRASE")
             {
+                throw std::invalid_argument("NETWORK_PASSPHRASE not supposed to be set");
                 if (!item.second->as<std::string>())
                 {
                     throw std::invalid_argument("invalid NETWORK_PASSPHRASE");
