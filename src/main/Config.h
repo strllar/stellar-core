@@ -9,7 +9,7 @@
 #include <map>
 #include "crypto/SecretKey.h"
 
-#define DEFAULT_PEER_PORT 11625
+#define DEFAULT_PEER_PORT 12625
 
 namespace stellar
 {
