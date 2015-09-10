@@ -11,12 +11,15 @@
 #include "medida/metrics_registry.h"
 
 const uint32_t INFLATION_FREQUENCY = (60 * 60 * 24 * 7); // every 7 days
-// inflation is .000190721 per 7 days, or 1% a year
-const int64_t INFLATION_RATE_TRILLIONTHS = 190721000LL;
+const uint32_t LAST_HIGH_RATE_INFLATION_SEQ = 229; //7% last for 229 weeks and happy new year.
+// inflation is 7% in first 4 years, then 2%
+const int64_t INFLATION_HIGHRATE_TRILLIONTHS = 1345047000LL;
+const int64_t INFLATION_RATE_TRILLIONTHS = 381442000LL;
 const int64_t TRILLION = 1000000000000LL;
-const int64_t INFLATION_WIN_MIN_PERCENT = 500000000LL; // .05%
+
+const int64_t INFLATION_WIN_MIN_PERCENT = 500000000LL; // 0.05%
 const int INFLATION_NUM_WINNERS = 2000;
-const time_t INFLATION_START_TIME = (1404172800LL); // 1-jul-2014 (unix epoch)
+const time_t INFLATION_START_TIME = (1441641600); // 8-sept-2015 (unix epoch)
 
 namespace stellar
 {
@@ -76,6 +79,12 @@ InflationOpFrame::doApply(medida::MetricsRegistry& metrics, LedgerDelta& delta,
 
     int64 amountToDole =
         bigDivide(lcl.totalCoins, INFLATION_RATE_TRILLIONTHS, TRILLION);
+
+    if (lcl.inflationSeq <= LAST_HIGH_RATE_INFLATION_SEQ) {
+        amountToDole =
+                bigDivide(lcl.totalCoins, INFLATION_HIGHRATE_TRILLIONTHS, TRILLION);
+    }
+
     amountToDole += lcl.feePool;
 
     lcl.feePool = 0;

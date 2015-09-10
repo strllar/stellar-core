@@ -14,9 +14,9 @@ namespace strKey
 
 typedef enum
 {
-    // version bytes - 5 bits only
-    STRKEY_PUBKEY_ED25519 = 6, // 'G'
-    STRKEY_SEED_ED25519 = 18   // 'S'
+    // version bytes - 5 bits only for leading letter, 3 bits for following group
+    STRKEY_PUBKEY_ED25519 = (13<<3) + 0, // 'N' + [ABCD]
+    STRKEY_SEED_ED25519 = (23<<3) + 6  // 'X' + [YZ23]
 } StrKeyVersionByte;
 
 // Encode a version byte and ByteSlice into StrKey

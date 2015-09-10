@@ -14,7 +14,7 @@ namespace strKey
 std::string
 toStrKey(uint8_t ver, ByteSlice const& bin)
 {
-    ver <<= 3; // promote to 8 bits
+    //ver <<= 3; // promote to 8 bits
     std::vector<uint8_t> toEncode;
     toEncode.reserve(1 + bin.size() + 2);
     toEncode.emplace_back(ver);
@@ -58,7 +58,7 @@ fromStrKey(std::string const& strKey, uint8_t& outVersion,
         return false;
     }
 
-    outVersion = decoded.at(0) >> 3; // only keep 5 bits from the version
+    outVersion = decoded.at(0) ;//we need 8 bits for klm////>> 3; // only keep 5 bits from the version
     decoded.erase(decoded.begin());
 
     return true;
