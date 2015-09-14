@@ -211,7 +211,7 @@ LedgerManagerImpl::startNewLedger()
         txframe->getResult().result.code(txFAILED);
         txframe->getResult().result.results().push_back(opr);
 
-        txframe->storeTransaction(*this, delta, tm, 1, trs);
+        txframe->storeTransaction(*this, tm, 1, trs);
     }
 
     closeLedgerHelper(delta);
