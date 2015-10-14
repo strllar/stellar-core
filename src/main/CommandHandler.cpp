@@ -418,6 +418,8 @@ CommandHandler::info(std::string const& params, std::string& retStr)
     root["info"]["build"] = STELLAR_CORE_VERSION;
     root["info"]["protocol_version"] = mApp.getConfig().LEDGER_PROTOCOL_VERSION;
     root["info"]["state"] = mApp.getStateHuman();
+    if(mApp.getExtraStateInfo().size())
+        root["info"]["extra"] = mApp.getExtraStateInfo();
     root["info"]["ledger"]["num"] = (int)lm.getLedgerNum();
     root["info"]["ledger"]["hash"] =
         binToHex(lm.getLastClosedLedgerHeader().hash);
@@ -508,16 +510,21 @@ CommandHandler::checkpoint(std::string const& params, std::string& retStr)
     auto& hm = mApp.getHistoryManager();
     if (hm.hasAnyWritableHistoryArchive())
     {
-        bool done = false;
+        size_t done = 0;
         asio::error_code ec;
         uint32_t lclNum = mApp.getLedgerManager().getLastClosedLedgerNum();
         uint32_t ledgerNum = mApp.getLedgerManager().getLedgerNum();
-        hm.publishHistory([&done, &ec](asio::error_code const& ec2)
-                          {
-                              ec = ec2;
-                              done = true;
-                          });
-        while (!done)
+        hm.queueCurrentHistory();
+        size_t toPublish =
+            hm.publishQueuedHistory([&done, &ec](asio::error_code const& ec2)
+                                    {
+                                        if (ec2)
+                                        {
+                                            ec = ec2;
+                                        }
+                                        ++done;
+                                    });
+        while (done != toPublish)
         {
             mApp.getClock().crank(false);
         }

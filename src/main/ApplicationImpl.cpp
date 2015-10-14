@@ -21,6 +21,7 @@
 #include "simulation/LoadGenerator.h"
 #include "crypto/SecretKey.h"
 #include "crypto/SHA.h"
+#include "scp/LocalNode.h"
 #include "medida/metrics_registry.h"
 #include "medida/reporting/console_reporter.h"
 #include "medida/meter.h"
@@ -100,6 +101,8 @@ ApplicationImpl::ApplicationImpl(VirtualClock& clock, Config const& cfg)
     {
         mConfig.FORCE_SCP = true;
     }
+
+    mDatabase->upgradeToCurrentSchema();
 
     mTmpDirManager = make_unique<TmpDirManager>(cfg.TMP_DIR_PATH);
     mOverlayManager = OverlayManager::create(*this);
@@ -226,7 +229,13 @@ ApplicationImpl::start()
     {
         throw std::invalid_argument("Quorum not configured");
     }
-    mOverlayManager->start();
+    if (mConfig.NODE_IS_VALIDATOR &&
+        !mHerder->isQuorumSetSane(mConfig.NODE_SEED.getPublicKey(),
+                                    mConfig.QUORUM_SET))
+    {
+        throw std::invalid_argument(
+            "Invalid QUORUM_SET: bad threshold or validator is not a member");
+    }
 
     if (mPersistentState->getState(PersistentState::kDatabaseInitialized) !=
         "true")
@@ -239,6 +248,16 @@ ApplicationImpl::start()
     mLedgerManager->loadLastKnownLedger(
         [this, &done](asio::error_code const& ec)
         {
+            // restores the SCP state before starting overlay
+            mHerder->restoreSCPState();
+            mOverlayManager->start();
+            auto npub = mHistoryManager->publishQueuedHistory(
+                [](asio::error_code const&){});
+            if (npub != 0)
+            {
+                CLOG(INFO, "Ledger") << "Restarted publishing " << npub
+                                     << " queued snapshots";
+            }
             if (mConfig.FORCE_SCP)
             {
                 std::string flagClearedMsg = "";
@@ -413,6 +432,18 @@ ApplicationImpl::getStateHuman() const
         "Booting",     "Joining SCP", "Connected",
         "Catching up", "Synced!",     "Stopping"};
     return std::string(stateStrings[getState()]);
+}
+
+std::string 
+ApplicationImpl::getExtraStateInfo() const
+{
+    return std::string(mExtraStateInfo);
+}
+
+void
+ApplicationImpl::setExtraStateInfo(std::string const& stateStr)
+{
+    mExtraStateInfo = stateStr;
 }
 
 bool

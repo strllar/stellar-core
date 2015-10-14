@@ -21,7 +21,9 @@ class PersistentState
         kHistoryArchiveState,
         kForceSCPOnNextLaunch,
         kDatabaseInitialized,
-        kLastEntry
+        kLastSCPData,
+        kDatabaseSchema,
+        kLastEntry,
     };
 
     static void dropAll(Database& db);

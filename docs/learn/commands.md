@@ -19,8 +19,9 @@ stellar-core can be controlled via the following commands.
 * **--forcescp**: This command is used to start a network from scratch or when a 
 network has lost quorum because of failed nodes or otherwise. It sets a flag in 
 the database. The next time stellar-core is run, stellar-core will start 
-emitting SCP messages based on its last known ledger rather than waiting to hear
-a ledger close from the network. This doesn't change the requirements for quorum so although this node will emit SCP messages SCP won't complete until there are also a quorum of other nodes also emitting SCP messages on this same ledger.
+emitting SCP messages based on its last known ledger. Without this flag stellar-core waits to hear
+a ledger close from the network before starting SCP.<br>
+forcescp doesn't change the requirements for quorum so although this node will emit SCP messages SCP won't complete until there are also a quorum of other nodes also emitting SCP messages on this same ledger.
 * **--fuzz FILE**: Run a single fuzz input and exit.
 * **--genfuzz FILE**:  Generate a random fuzzer input file.
 * **--genseed**: Generate and print a random public/private key and then exit.
@@ -46,14 +47,11 @@ command line option (see above). Most commands return their results in JSON form
   Triggers the instance to catch up to ledger NNN from history;
   Mode is either 'minimal' (the default, if omitted) or 'complete'.
 
-* **checkpoint**
-  Triggers the instance to write an immediate history checkpoint.
-
 * **checkdb**
   Triggers the instance to perform a background check of the database's state.
 
 * **checkpoint**
-  Forces uploading a history checkpoint to the archive.
+  Triggers the instance to write an immediate history checkpoint. And uploads it to the archive.
 
 * **connect**
   `/connect?peer=NAME&port=NNN`<br>

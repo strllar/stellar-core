@@ -129,6 +129,10 @@ LedgerManagerImpl::setState(State s)
         mApp.syncOwnMetrics();
         CLOG(INFO, "Ledger") << "Changing state " << oldState << " -> "
                              << getStateHuman();
+        if(mState != LM_CATCHING_UP_STATE)
+        { 
+            mApp.setExtraStateInfo(std::string());
+        }
     }
 }
 
@@ -271,6 +275,9 @@ LedgerManagerImpl::loadLastKnownLedger(
 
             auto missing =
                 mApp.getBucketManager().checkForMissingBucketsFiles(has);
+            auto pubmissing =
+                mApp.getHistoryManager().getMissingBucketsReferencedByPublishQueue();
+            missing.insert(missing.end(), pubmissing.begin(), pubmissing.end());
             if (!missing.empty())
             {
                 CLOG(WARNING, "Ledger")
@@ -393,10 +400,14 @@ LedgerManagerImpl::externalizeValue(LedgerCloseData const& ledgerData)
         else
         {
             // Out of sync, buffer what we just heard and start catchup.
-            CLOG(INFO, "Ledger") << "Lost sync, local LCL is "
+            std::stringstream stateStr;
+            stateStr << "Lost sync, local LCL is "
                                  << mLastClosedLedger.header.ledgerSeq
                                  << ", network closed ledger "
                                  << ledgerData.mLedgerSeq;
+
+            CLOG(INFO, "Ledger") << stateStr.str();
+            mApp.setExtraStateInfo(stateStr.str());
 
             assert(mSyncingLedgers.size() == 0);
             mSyncingLedgers.push_back(ledgerData);
@@ -423,18 +434,29 @@ LedgerManagerImpl::externalizeValue(LedgerCloseData const& ledgerData)
                            mApp.getHistoryManager().nextCheckpointCatchupProbe(
                                mSyncingLedgers.front().mLedgerSeq);
 
-            CLOG(INFO, "Ledger") << "Catchup awaiting checkpoint"
+            std::stringstream stateStr;
+
+            stateStr << "Catchup awaiting checkpoint"
                                  << " (ETA: " << (now > eta ? 0 : (eta - now))
                                  << " seconds), buffering close of ledger "
                                  << ledgerData.mLedgerSeq;
+
+             CLOG(INFO, "Ledger") << stateStr.str();
+             mApp.setExtraStateInfo(stateStr.str());
+
         }
         else
         {
             // Out-of-order close while catching up; timeout / network failure?
-            CLOG(INFO, "Ledger")
+            std::stringstream stateStr;
+            stateStr
                 << "Out-of-order close during catchup, buffered to "
                 << mSyncingLedgers.back().mLedgerSeq << " but network closed "
                 << ledgerData.mLedgerSeq;
+
+            CLOG(INFO, "Ledger") << stateStr.str();
+            mApp.setExtraStateInfo(stateStr.str());
+
             CLOG(WARNING, "Ledger") << "this round of catchup will fail.";
         }
         break;
@@ -743,14 +765,36 @@ LedgerManagerImpl::closeLedger(LedgerCloseData const& ledgerData)
 
     ledgerDelta.commit();
     closeLedgerHelper(ledgerDelta);
+
+    // The next 4 steps happen in a relatively non-obvious, subtle order.
+    // This is unfortunate and it would be nice if we could make it not
+    // be so subtle, but for the time being this is where we are.
+    //
+    // 1. Queue any history-checkpoint to the database, _within_ the current
+    //    transaction. This way if there's a crash after commit and before
+    //    we've published successfully, we'll re-publish on restart.
+    //
+    // 2. Commit the current transaction.
+    //
+    // 3. Start any queued checkpoint publishing, _after_ the commit so that
+    //    it takes its snapshot of history-rows from the committed state, but
+    //    _before_ we GC any buckets (because this is the step where the
+    //    bucket refcounts are incremented for the duration of the publish).
+    //
+    // 4. GC unreferenced buckets. Only do this once publishes are in progress.
+
+    // step 1
+    auto &hm = mApp.getHistoryManager();
+    hm.maybeQueueHistoryCheckpoint();
+
+    // step 2
+    mApp.getDatabase().clearPreparedStatementCache();
     txscope.commit();
 
-    // Notify ledger close to other components.
-    mApp.getHistoryManager().maybePublishHistory([](asio::error_code const&)
-                                                 {
-                                                 });
+    // step 3
+    hm.publishQueuedHistory([](asio::error_code const&){});
 
-    // Permit BucketManager to forget buckets that are no longer in use.
+    // step 4
     mApp.getBucketManager().forgetUnreferencedBuckets();
 }
 
