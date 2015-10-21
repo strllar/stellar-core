@@ -6,9 +6,10 @@
 #include "main/Config.h"
 #include "history/HistoryArchive.h"
 #include "StellarCoreVersion.h"
-#include "lib/util/cpptoml.h"
 #include "util/Logging.h"
 #include "util/types.h"
+#include "crypto/Hex.h"
+#include <sstream>
 
 namespace stellar
 {
@@ -34,7 +35,9 @@ Config::Config() : NODE_SEED(SecretKey::random())
     CATCHUP_COMPLETE = false;
     ARTIFICIALLY_GENERATE_LOAD_FOR_TESTING = false;
     ARTIFICIALLY_ACCELERATE_TIME_FOR_TESTING = false;
+    ARTIFICIALLY_SET_CLOSE_TIME_FOR_TESTING = 0;
     ARTIFICIALLY_PESSIMIZE_MERGES_FOR_TESTING = false;
+    ALLOW_LOCALHOST_FOR_TESTING = false;
     FAILURE_SAFETY = 1;
     UNSAFE_QUORUM = false;
 
@@ -63,8 +66,8 @@ Config::Config() : NODE_SEED(SecretKey::random())
 }
 
 void
-loadQset(std::shared_ptr<cpptoml::toml_group> group, SCPQuorumSet& qset,
-         int level)
+Config::loadQset(std::shared_ptr<cpptoml::toml_group> group, SCPQuorumSet& qset,
+                 int level)
 {
     if (!group)
     {
@@ -106,8 +109,10 @@ loadQset(std::shared_ptr<cpptoml::toml_group> group, SCPQuorumSet& qset,
                 {
                     throw std::invalid_argument("invalid VALIDATORS");
                 }
-                qset.validators.emplace_back(
-                    PubKeyUtils::fromStrKey(v->as<std::string>()->value()));
+
+                PublicKey nodeID;
+                parseNodeID(v->as<std::string>()->value(), nodeID);
+                qset.validators.emplace_back(nodeID);
             }
         }
         else
@@ -150,9 +155,6 @@ loadQset(std::shared_ptr<cpptoml::toml_group> group, SCPQuorumSet& qset,
 void
 Config::load(std::string const& filename)
 {
-    bool setNodeSeed = false;
-    bool setValidationSeed = false;
-
     LOG(DEBUG) << "Loading config from: " << filename;
     try
     {
@@ -265,7 +267,6 @@ Config::load(std::string const& filename)
                 }
                 CATCHUP_COMPLETE = item.second->as<bool>()->value();
             }
-
             else if (item.first == "ARTIFICIALLY_GENERATE_LOAD_FOR_TESTING")
             {
                 if (!item.second->as<bool>())
@@ -285,6 +286,21 @@ Config::load(std::string const& filename)
                 }
                 ARTIFICIALLY_ACCELERATE_TIME_FOR_TESTING =
                     item.second->as<bool>()->value();
+            }
+            else if (item.first == "ARTIFICIALLY_SET_CLOSE_TIME_FOR_TESTING")
+            {
+                if (!item.second->as<int64>())
+                {
+                    throw std::invalid_argument(
+                        "invalid ARTIFICIALLY_SET_CLOSE_TIME_FOR_TESTING");
+                }
+                int64_t f = item.second->as<int64_t>()->value();
+                if (f < 0 || f >= UINT32_MAX)
+                {
+                    throw std::invalid_argument(
+                        "invalid ARTIFICIALLY_SET_CLOSE_TIME_FOR_TESTING");
+                }
+                ARTIFICIALLY_SET_CLOSE_TIME_FOR_TESTING = (uint32_t)f;
             }
             else if (item.first == "MANUAL_CLOSE")
             {
@@ -318,64 +334,34 @@ Config::load(std::string const& filename)
                 }
                 BUCKET_DIR_PATH = item.second->as<std::string>()->value();
             }
-            else if (item.first == "VALIDATION_SEED")
+            else if (item.first == "NODE_NAMES")
             {
-                if (!item.second->as<std::string>())
+                if (!item.second->is_array())
                 {
-                    throw std::invalid_argument("invalid VALIDATION_SEED");
+                    throw std::invalid_argument("NODE_NAMES must be an array");
                 }
-                setValidationSeed = true;
-                if (setNodeSeed)
+                for (auto v : item.second->as_array()->array())
                 {
-                    throw std::invalid_argument(
-                        "set both NODE_SEED and deprecated VALIDATION_SEED");
-                }
-                else
-                {
-                    LOG(WARNING) << "***************************************";
-                    LOG(WARNING) << "";
-                    LOG(WARNING) << "Deprecated variable: VALIDATION_SEED";
-                    LOG(WARNING) << "";
-                    LOG(WARNING) << "Config should instead contain:";
-                    LOG(WARNING) << "";
-                    LOG(WARNING) << "   NODE_SEED=<seed>";
-                    LOG(WARNING) << "   NODE_IS_VALIDATOR=true";
-                    LOG(WARNING) << "";
-                    LOG(WARNING) << "Treating deprecated VALIDATION_SEED as";
-                    LOG(WARNING) << "implying the above, for the time being.";
-                    LOG(WARNING) << "";
-                    LOG(WARNING) << "***************************************";
-                }
-                NODE_IS_VALIDATOR = true;
-                std::string seed = item.second->as<std::string>()->value();
-                NODE_SEED = SecretKey::fromStrKeySeed(seed);
-            }
-            else if (item.first == "NODE_SEED" || item.first == "PEER_SEED")
-            {
-                if (item.first == "PEER_SEED")
-                {
-                    LOG(WARNING) << "***************************************";
-                    LOG(WARNING) << "";
-                    LOG(WARNING) << "Deprecated variable: PEER_SEED";
-                    LOG(WARNING) << "";
-                    LOG(WARNING) << "Variable renamed to NODE_SEED, so";
-                    LOG(WARNING) << "treating as such for the time being.";
-                    LOG(WARNING) << "";
-                    LOG(WARNING) << "***************************************";
-                }
+                    if (!v->as<std::string>())
+                    {
+                        throw std::invalid_argument(
+                            "invalid element of NODE_NAMES");
+                    }
 
+                    PublicKey nodeID;
+                    parseNodeID(v->as<std::string>()->value(), nodeID);
+                }
+            }
+            else if (item.first == "NODE_SEED")
+            {
                 if (!item.second->as<std::string>())
                 {
                     throw std::invalid_argument("invalid NODE_SEED");
                 }
-                if (setValidationSeed)
-                {
-                    throw std::invalid_argument(
-                        "set both NODE_SEED and deprecated VALIDATION_SEED");
-                }
-                setNodeSeed = true;
+
                 std::string seed = item.second->as<std::string>()->value();
                 NODE_SEED = SecretKey::fromStrKeySeed(seed);
+                VALIDATOR_NAMES[NODE_SEED.getStrKeyPublic()] = "self";
             }
             else if (item.first == "NODE_IS_VALIDATOR")
             {
@@ -434,8 +420,11 @@ Config::load(std::string const& filename)
                         throw std::invalid_argument(
                             "invalid element of PREFERRED_PEER_KEYS");
                     }
+
+                    PublicKey nodeID;
+                    parseNodeID(v->as<std::string>()->value(), nodeID);
                     PREFERRED_PEER_KEYS.push_back(
-                        v->as<std::string>()->value());
+                        PubKeyUtils::toStrKey(nodeID));
                 }
             }
             else if (item.first == "PREFERRED_PEERS_ONLY")
@@ -498,8 +487,7 @@ Config::load(std::string const& filename)
                     item.second->as<int64_t>()->value() > 100 ||
                     item.second->as<int64_t>()->value() < 0)
                 {
-                    throw std::invalid_argument(
-                        "invalid MINIMUM_IDLE_PERCENT");
+                    throw std::invalid_argument("invalid MINIMUM_IDLE_PERCENT");
                 }
                 MINIMUM_IDLE_PERCENT =
                     (uint32_t)item.second->as<int64_t>()->value();
@@ -627,5 +615,66 @@ Config::validateConfig()
                       "are doing!";
         throw std::invalid_argument("SCP unsafe");
     }
+}
+
+void
+Config::parseNodeID(std::string configStr, PublicKey& retKey)
+{
+    if (configStr.size() < 2)
+        throw std::invalid_argument("invalid key");
+
+    // check if configStr is a PublicKey or a common name
+    if (configStr[0] == '$')
+    {
+        std::string commonName = configStr.substr(1);
+        for (auto& v : VALIDATOR_NAMES)
+        {
+            if (v.second == commonName)
+            {
+                retKey = PubKeyUtils::fromStrKey(v.first);
+                return;
+            }
+        }
+        throw std::invalid_argument("unknown key in config");
+    }
+    else
+    {
+        std::istringstream iss(configStr);
+        std::string nodestr;
+        iss >> nodestr;
+        retKey = PubKeyUtils::fromStrKey(nodestr);
+
+        if (iss)
+        { // get any common name they have added
+            std::string commonName;
+            iss >> commonName;
+            if (commonName.size())
+            {
+                for (auto& v : VALIDATOR_NAMES)
+                {
+                    if (v.second == commonName)
+                    {
+                        throw std::invalid_argument("name already used");
+                    }
+                }
+
+                auto it = VALIDATOR_NAMES.find(nodestr);
+                if (it == VALIDATOR_NAMES.end())
+                    VALIDATOR_NAMES[nodestr] = commonName;
+                else
+                    throw std::invalid_argument("naming node twice");
+            }
+        }
+    }
+}
+
+std::string
+Config::toShortString(PublicKey const& pk) const
+{
+    auto it = VALIDATOR_NAMES.find(PubKeyUtils::toStrKey(pk));
+    if (it == VALIDATOR_NAMES.end())
+        return PubKeyUtils::toShortString(pk);
+    else
+        return it->second;
 }
 }
