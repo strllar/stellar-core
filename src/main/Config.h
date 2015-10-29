@@ -50,10 +50,6 @@ class Config : public std::enable_shared_from_this<Config>
     // participate in consensus. DO NOT INCLUDE THIS IN A CONFIG FILE
     bool FORCE_SCP;
 
-    // reset the database to the genesis ledger. DO NOT INCLUDE THIS IN
-    // A CONFIG FILE
-    bool REBUILD_DB;
-
     // This is a mode for testing. It prevents you from trying to connect to
     // other peers
     bool RUN_STANDALONE;
@@ -95,7 +91,7 @@ class Config : public std::enable_shared_from_this<Config>
     // You will need at least 3f+1 nodes in your quorum set.
     // If you don't have enough in your quorum set to tolerate the level you
     //  set here stellar-core won't run.
-    uint32_t FAILURE_SAFETY;
+    int32_t FAILURE_SAFETY;
 
     // If set to true allows you to specify an unsafe quorum set.
     // Otherwise it won't start if you have your threshold % set too low.
@@ -171,5 +167,7 @@ class Config : public std::enable_shared_from_this<Config>
     void load(std::string const& filename);
 
     std::string toShortString(PublicKey const& pk) const;
+    std::string toStrKey(PublicKey const& pk) const;
+    bool resolveNodeID(std::string const& s, PublicKey& retKey) const;
 };
 }

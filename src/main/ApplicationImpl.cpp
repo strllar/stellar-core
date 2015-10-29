@@ -66,8 +66,8 @@ ApplicationImpl::ApplicationImpl(VirtualClock& clock, Config const& cfg)
     mNetworkID = sha256(mConfig.NETWORK_PASSPHRASE);
 
     unsigned t = std::thread::hardware_concurrency();
-    LOG(INFO) << "Application constructing "
-              << "(worker threads: " << t << ")";
+    LOG(DEBUG) << "Application constructing "
+               << "(worker threads: " << t << ")";
     mStopSignals.async_wait([this](asio::error_code const& ec, int sig)
                             {
                                 if (!ec)
@@ -82,29 +82,6 @@ ApplicationImpl::ApplicationImpl(VirtualClock& clock, Config const& cfg)
     // into App.getFoo() to get information / start up.
     mDatabase = make_unique<Database>(*this);
     mPersistentState = make_unique<PersistentState>(*this);
-
-    bool initializeDB =
-        (mConfig.REBUILD_DB || mConfig.DATABASE == "sqlite3://:memory:");
-    if (initializeDB)
-    {
-        auto wipeMsg = (getPersistentState().getState(
-                            PersistentState::kDatabaseInitialized) == "true"
-                            ? " wiped and initialized"
-                            : " initialized");
-
-        mDatabase->initialize();
-
-        LOG(INFO) << "* ";
-        LOG(INFO) << "* The database has been" << wipeMsg;
-        LOG(INFO) << "* ";
-    }
-    else if (mPersistentState->getState(
-                 PersistentState::kForceSCPOnNextLaunch) == "true")
-    {
-        mConfig.FORCE_SCP = true;
-    }
-
-    mDatabase->upgradeToCurrentSchema();
 
     mTmpDirManager = make_unique<TmpDirManager>(cfg.TMP_DIR_PATH);
     mOverlayManager = OverlayManager::create(*this);
@@ -123,12 +100,19 @@ ApplicationImpl::ApplicationImpl(VirtualClock& clock, Config const& cfg)
                                     });
     }
 
-    if (initializeDB)
-    {
-        mLedgerManager->startNewLedger();
-    }
+    LOG(DEBUG) << "Application constructed";
+}
 
-    LOG(INFO) << "Application constructed";
+void
+ApplicationImpl::newDB()
+{
+    mDatabase->initialize();
+
+    LOG(INFO) << "* ";
+    LOG(INFO) << "* The database has been initialized";
+    LOG(INFO) << "* ";
+
+    mLedgerManager->startNewLedger();
 }
 
 void
@@ -223,6 +207,14 @@ ApplicationImpl::timeNow()
 void
 ApplicationImpl::start()
 {
+    mDatabase->upgradeToCurrentSchema();
+
+    if (mPersistentState->getState(PersistentState::kForceSCPOnNextLaunch) ==
+        "true")
+    {
+        mConfig.FORCE_SCP = true;
+    }
+
     if (mConfig.NETWORK_PASSPHRASE.empty())
     {
         throw std::invalid_argument("NETWORK_PASSPHRASE not configured");
@@ -231,19 +223,12 @@ ApplicationImpl::start()
     {
         throw std::invalid_argument("Quorum not configured");
     }
-    if (mConfig.NODE_IS_VALIDATOR &&
-        !mHerder->isQuorumSetSane(mConfig.NODE_SEED.getPublicKey(),
+    if (!mHerder->isQuorumSetSane(mConfig.NODE_SEED.getPublicKey(),
                                   mConfig.QUORUM_SET))
     {
         throw std::invalid_argument(
-            "Invalid QUORUM_SET: bad threshold or validator is not a member");
-    }
-
-    if (mPersistentState->getState(PersistentState::kDatabaseInitialized) !=
-        "true")
-    {
-        throw std::runtime_error(
-            "Database not initialized and REBUID_DB is false.");
+            "Invalid QUORUM_SET: bad threshold, "
+            "duplicate entry or self is not a member (validator)");
     }
 
     bool done = false;

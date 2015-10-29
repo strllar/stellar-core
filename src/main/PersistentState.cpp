@@ -13,8 +13,8 @@ namespace stellar
 using namespace std;
 
 string PersistentState::mapping[kLastEntry] = {
-    "lastclosedledger",    "historyarchivestate", "forcescponnextlaunch",
-    "databaseinitialized", "lastscpdata",         "databaseschema"};
+    "lastclosedledger", "historyarchivestate", "forcescponnextlaunch",
+    "lastscpdata", "databaseschema"};
 
 string PersistentState::kSQLCreateStatement =
     "CREATE TABLE IF NOT EXISTS storestate ("
@@ -24,7 +24,6 @@ string PersistentState::kSQLCreateStatement =
 
 PersistentState::PersistentState(Application& app) : mApp(app)
 {
-    mApp.getDatabase().getSession() << kSQLCreateStatement;
 }
 
 void
@@ -34,11 +33,6 @@ PersistentState::dropAll(Database& db)
 
     soci::statement st = db.getSession().prepare << kSQLCreateStatement;
     st.execute(true);
-
-    soci::statement st2 =
-        db.getSession().prepare
-        << "INSERT INTO storestate (statename, state) VALUES ('" + mapping[kDatabaseInitialized] + "', 'true');";
-    st2.execute(true);
 }
 
 string

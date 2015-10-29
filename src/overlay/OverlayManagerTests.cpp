@@ -79,6 +79,7 @@ class OverlayManagerTests
             : ApplicationImpl(clock, cfg)
         {
             mOverlayManager = make_shared<OverlayManagerStub>(*this);
+            newDB();
         }
         virtual OverlayManagerStub&
         getOverlayManager() override

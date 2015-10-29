@@ -288,7 +288,7 @@ PubKeyUtils::verifySig(PublicKey const& key, Signature const& signature,
 std::string
 PubKeyUtils::toShortString(PublicKey const& pk)
 {
-    return hexAbbrev(pk.ed25519());
+    return toStrKey(pk).substr(0, 5);
 }
 
 std::string
@@ -308,7 +308,7 @@ PubKeyUtils::fromStrKey(std::string const& s)
         (k.size() != crypto_sign_PUBLICKEYBYTES) ||
         (s.size() != strKey::getStrKeySize(crypto_sign_PUBLICKEYBYTES)))
     {
-        throw std::runtime_error("bad public key");
+        throw std::invalid_argument("bad public key");
     }
     std::copy(k.begin(), k.end(), pk.ed25519().begin());
     return pk;

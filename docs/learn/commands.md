@@ -82,6 +82,13 @@ debugging purpose).
 * **peers**
   Returns the list of known peers in JSON format.
 
+* **quorum**
+  `/quorum?[node=NODE_ID][&compact=true]`<br>
+  returns information about the quorum for node NODE_ID (this node by default).
+  NODE_ID is either a full key (`GABCD...`), an alias (`$name`) or
+  an abbreviated ID (`@GABCD`).
+  If compact is set, only returns a summary version.
+
 * **setcursor**
  `/setcursor?id=ID&cursor=N`<br>
   sets or creates a cursor identified by `ID` with value `N`. ID is an uppercase AlphaNum, N is an uint32 that represents the last ledger sequence number that the instance ID processed.

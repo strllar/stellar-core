@@ -46,8 +46,11 @@ class Herder
     // How many seconds of inactivity before evicting a node.
     static std::chrono::seconds const NODE_EXPIRATION_SECONDS;
 
-    // How many ledger in past/future we consider an envelope viable.
+    // How many ledger in the future we consider an envelope viable.
     static uint32 const LEDGER_VALIDITY_BRACKET;
+
+    // How many ledgers in the past we keep track of
+    static uint32 const MAX_SLOTS_TO_REMEMBER;
 
     static std::unique_ptr<Herder> create(Application& app);
 
@@ -78,13 +81,14 @@ class Herder
     // restores SCP state based on the last messages saved on disk
     virtual void restoreSCPState() = 0;
 
-    virtual void recvSCPQuorumSet(Hash hash, SCPQuorumSet const& qset) = 0;
-    virtual void recvTxSet(Hash hash, TxSetFrame const& txset) = 0;
+    virtual void recvSCPQuorumSet(Hash const& hash,
+                                  SCPQuorumSet const& qset) = 0;
+    virtual void recvTxSet(Hash const& hash, TxSetFrame const& txset) = 0;
     // We are learning about a new transaction.
     virtual TransactionSubmitStatus recvTransaction(TransactionFramePtr tx) = 0;
     virtual void peerDoesntHave(stellar::MessageType type,
                                 uint256 const& itemID, PeerPtr peer) = 0;
-    virtual TxSetFramePtr getTxSet(Hash hash) = 0;
+    virtual TxSetFramePtr getTxSet(Hash const& hash) = 0;
     virtual SCPQuorumSetPtr getQSet(Hash const& qSetHash) = 0;
 
     // We are learning about a new envelope.
@@ -112,5 +116,7 @@ class Herder
     }
 
     virtual void dumpInfo(Json::Value& ret) = 0;
+    virtual void dumpQuorumInfo(Json::Value& ret, NodeID const& id,
+                                bool summary, uint64 index = 0) = 0;
 };
 }

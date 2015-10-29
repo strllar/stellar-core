@@ -9,17 +9,19 @@
 #include "util/Logging.h"
 #include "util/types.h"
 #include "crypto/Hex.h"
+#include "scp/LocalNode.h"
 #include <sstream>
 
 namespace stellar
 {
+using xdr::operator<;
+
 Config::Config() : NODE_SEED(SecretKey::random())
 {
     // fill in defaults
 
     // non configurable
     FORCE_SCP = false;
-    REBUILD_DB = false;
     LEDGER_PROTOCOL_VERSION = 1;
 
     OVERLAY_PROTOCOL_MIN_VERSION = 4;
@@ -38,7 +40,7 @@ Config::Config() : NODE_SEED(SecretKey::random())
     ARTIFICIALLY_SET_CLOSE_TIME_FOR_TESTING = 0;
     ARTIFICIALLY_PESSIMIZE_MERGES_FOR_TESTING = false;
     ALLOW_LOCALHOST_FOR_TESTING = false;
-    FAILURE_SAFETY = 1;
+    FAILURE_SAFETY = -1;
     UNSAFE_QUORUM = false;
 
     LOG_FILE_PATH = "stellar-core.log";
@@ -46,7 +48,7 @@ Config::Config() : NODE_SEED(SecretKey::random())
     BUCKET_DIR_PATH = "buckets";
 
     DESIRED_BASE_FEE = 100;
-    DESIRED_MAX_TX_PER_LEDGER = 500;
+    DESIRED_MAX_TX_PER_LEDGER = 50;
 
     HTTP_PORT = DEFAULT_PEER_PORT + 1;
     PUBLIC_HTTP_PORT = false;
@@ -237,11 +239,11 @@ Config::load(std::string const& filename)
                     throw std::invalid_argument("invalid FAILURE_SAFETY");
                 }
                 int64_t f = item.second->as<int64_t>()->value();
-                if (f < 0 || f >= UINT32_MAX)
+                if (f < -1 || f >= INT32_MAX)
                 {
                     throw std::invalid_argument("invalid FAILURE_SAFETY");
                 }
-                FAILURE_SAFETY = (uint32_t)f;
+                FAILURE_SAFETY = (int32_t)f;
             }
             else if (item.first == "UNSAFE_QUORUM")
             {
@@ -301,6 +303,15 @@ Config::load(std::string const& filename)
                         "invalid ARTIFICIALLY_SET_CLOSE_TIME_FOR_TESTING");
                 }
                 ARTIFICIALLY_SET_CLOSE_TIME_FOR_TESTING = (uint32_t)f;
+            }
+            else if (item.first == "ALLOW_LOCALHOST_FOR_TESTING")
+            {
+                if (!item.second->as<bool>())
+                {
+                    throw std::invalid_argument(
+                        "invalid ALLOW_LOCALHOST_FOR_TESTING");
+                }
+                ALLOW_LOCALHOST_FOR_TESTING = item.second->as<bool>()->value();
             }
             else if (item.first == "MANUAL_CLOSE")
             {
@@ -589,31 +600,68 @@ Config::load(std::string const& filename)
 void
 Config::validateConfig()
 {
-    if (FAILURE_SAFETY == 0 && UNSAFE_QUORUM == false)
+    std::set<NodeID> nodes;
+    LocalNode::forAllNodes(QUORUM_SET, [&](NodeID const& n)
+                           {
+                               nodes.insert(n);
+                           });
+
+    if (nodes.size() == 0)
     {
-        LOG(ERROR) << "Can't have FAILURE_SAFETY=0 unless you also set "
-                      "UNSAFE_QUORUM=true. Be sure you know what you are "
-                      "doing!";
-        throw std::invalid_argument("SCP unsafe");
+        throw std::invalid_argument("QUORUM_SET not configured");
     }
 
-    unsigned int topSize = (unsigned int)(QUORUM_SET.validators.size() +
-                                          QUORUM_SET.innerSets.size());
+    // calculates nodes that would break quorum
+    auto r = LocalNode::findClosestVBlocking(QUORUM_SET, nodes);
 
-    if (topSize < 3 * FAILURE_SAFETY + 1)
+    if (FAILURE_SAFETY == -1)
     {
-        LOG(ERROR) << "Not enough nodes in your Quorum set to ensure your "
-                      "desired level of FAILURE_SAFETY.";
-        throw std::invalid_argument("SCP unsafe");
+        // calculates default value for safety assuming flat quorum
+        // n = 3f+1
+        FAILURE_SAFETY = (static_cast<uint32>(nodes.size()) - 1) / 3;
     }
 
-    unsigned int minSize = 1 + (topSize * 67 - 1) / 100;
-    if (QUORUM_SET.threshold < minSize && UNSAFE_QUORUM == false)
+    if (UNSAFE_QUORUM == false)
     {
-        LOG(ERROR) << "Your THESHOLD_PERCENTAGE is too low. If you really want "
-                      "this set UNSAFE_QUORUM=true. Be sure you know what you "
-                      "are doing!";
-        throw std::invalid_argument("SCP unsafe");
+        try
+        {
+            if (FAILURE_SAFETY == 0)
+            {
+                LOG(ERROR)
+                    << "Can't have FAILURE_SAFETY=0 unless you also set "
+                       "UNSAFE_QUORUM=true. Be sure you know what you are "
+                       "doing!";
+                throw std::invalid_argument("SCP unsafe");
+            }
+
+            if (FAILURE_SAFETY >= r.size())
+            {
+                LOG(ERROR)
+                    << "Not enough nodes / thresholds too strict in your "
+                       "Quorum set to ensure your  desired level of "
+                       "FAILURE_SAFETY.";
+                throw std::invalid_argument("SCP unsafe");
+            }
+
+            unsigned int topSize = (unsigned int)(QUORUM_SET.validators.size() +
+                                                  QUORUM_SET.innerSets.size());
+            unsigned int minSize = 1 + (topSize * 2 - 1) / 3;
+            if (QUORUM_SET.threshold < minSize)
+            {
+                LOG(ERROR)
+                    << "Your THESHOLD_PERCENTAGE is too low. If you really "
+                       "want "
+                       "this set UNSAFE_QUORUM=true. Be sure you know what you "
+                       "are doing!";
+                throw std::invalid_argument("SCP unsafe");
+            }
+        }
+        catch (...)
+        {
+            LOG(INFO) << " Current QUORUM_SET breaks with " << r.size()
+                      << " failures";
+            throw;
+        }
     }
 }
 
@@ -626,16 +674,10 @@ Config::parseNodeID(std::string configStr, PublicKey& retKey)
     // check if configStr is a PublicKey or a common name
     if (configStr[0] == '$')
     {
-        std::string commonName = configStr.substr(1);
-        for (auto& v : VALIDATOR_NAMES)
+        if (!resolveNodeID(configStr, retKey))
         {
-            if (v.second == commonName)
-            {
-                retKey = PubKeyUtils::fromStrKey(v.first);
-                return;
-            }
+            throw std::invalid_argument("unknown key in config");
         }
-        throw std::invalid_argument("unknown key in config");
     }
     else
     {
@@ -650,19 +692,18 @@ Config::parseNodeID(std::string configStr, PublicKey& retKey)
             iss >> commonName;
             if (commonName.size())
             {
-                for (auto& v : VALIDATOR_NAMES)
+                std::string cName = "$";
+                cName += commonName;
+                if (resolveNodeID(cName, retKey))
                 {
-                    if (v.second == commonName)
-                    {
-                        throw std::invalid_argument("name already used");
-                    }
+                    throw std::invalid_argument("name already used");
                 }
 
-                auto it = VALIDATOR_NAMES.find(nodestr);
-                if (it == VALIDATOR_NAMES.end())
-                    VALIDATOR_NAMES[nodestr] = commonName;
-                else
+                if (!VALIDATOR_NAMES.emplace(std::make_pair(nodestr,
+                                                            commonName)).second)
+                {
                     throw std::invalid_argument("naming node twice");
+                }
             }
         }
     }
@@ -671,10 +712,63 @@ Config::parseNodeID(std::string configStr, PublicKey& retKey)
 std::string
 Config::toShortString(PublicKey const& pk) const
 {
-    auto it = VALIDATOR_NAMES.find(PubKeyUtils::toStrKey(pk));
+    std::string ret = PubKeyUtils::toStrKey(pk);
+    auto it = VALIDATOR_NAMES.find(ret);
     if (it == VALIDATOR_NAMES.end())
-        return PubKeyUtils::toShortString(pk);
+        return ret.substr(0, 5);
     else
         return it->second;
+}
+
+std::string
+Config::toStrKey(PublicKey const& pk) const
+{
+    std::string ret = PubKeyUtils::toStrKey(pk);
+    auto it = VALIDATOR_NAMES.find(ret);
+    if (it == VALIDATOR_NAMES.end())
+        return ret;
+    else
+        return it->second;
+}
+
+bool
+Config::resolveNodeID(std::string const& s, PublicKey& retKey) const
+{
+    if (s.size() > 1)
+    {
+        std::string arg = s.substr(1);
+        auto it = VALIDATOR_NAMES.end();
+        if (s[0] == '$')
+        {
+            it = std::find_if(VALIDATOR_NAMES.begin(), VALIDATOR_NAMES.end(),
+                              [&](std::pair<std::string, std::string> const& p)
+                              {
+                                  return p.second == arg;
+                              });
+        }
+        else if (s[0] == '@')
+        {
+            it = std::find_if(VALIDATOR_NAMES.begin(), VALIDATOR_NAMES.end(),
+                              [&](std::pair<std::string, std::string> const& p)
+                              {
+                                  return p.first.compare(0, arg.size(), arg) ==
+                                         0;
+                              });
+        }
+
+        if (it == VALIDATOR_NAMES.end())
+        {
+            return false;
+        }
+        else
+        {
+            retKey = PubKeyUtils::fromStrKey(it->first);
+        }
+    }
+    else
+    {
+        retKey = PubKeyUtils::fromStrKey(s);
+    }
+    return true;
 }
 }

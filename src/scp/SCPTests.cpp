@@ -67,10 +67,10 @@ class TestSCP : public SCPDriver
         mQuorumSets[qSetHash] = qSet;
     }
 
-    bool
+    SCPDriver::ValidationLevel
     validateValue(uint64 slotIndex, Value const& value) override
     {
-        return true;
+        return SCPDriver::kFullyValidatedValue;
     }
 
     void
@@ -183,6 +183,34 @@ class TestSCP : public SCPDriver
     receiveEnvelope(SCPEnvelope const& envelope)
     {
         mSCP.receiveEnvelope(envelope);
+    }
+
+    Slot&
+    getSlot(uint64 index)
+    {
+        return *mSCP.getSlot(index, false);
+    }
+
+    std::vector<SCPEnvelope>
+    getEntireState(uint64 index)
+    {
+        auto v = mSCP.getSlot(index, false)->getEntireCurrentState();
+        return v;
+    }
+
+    SCPEnvelope
+    getCurrentEnvelope(uint64 index, NodeID const& id)
+    {
+        auto r = getEntireState(index);
+        auto it = std::find_if(r.begin(), r.end(), [&](SCPEnvelope const& e)
+                               {
+                                   return e.statement.nodeID == id;
+                               });
+        if (it != r.end())
+        {
+            return *it;
+        }
+        throw std::runtime_error("not found");
     }
 };
 
@@ -350,6 +378,152 @@ TEST_CASE("vblocking and quorum", "[scp]")
     REQUIRE(LocalNode::isVBlocking(qSet, nodeSet) == true);
 }
 
+TEST_CASE("sane quorum set", "[scp]")
+{
+    SIMULATION_CREATE_NODE(0);
+    SIMULATION_CREATE_NODE(1);
+    SIMULATION_CREATE_NODE(2);
+    SIMULATION_CREATE_NODE(3);
+
+    auto check = [&](SCPQuorumSet const& qSetCheck, bool expected)
+    {
+        TestSCP scp(v0SecretKey, qSetCheck);
+
+        return (expected ==
+                scp.mSCP.getLocalNode()->isQuorumSetSane(v0NodeID, qSetCheck));
+    };
+
+    SCPQuorumSet qSet;
+
+    qSet.threshold = 0;
+    qSet.validators.push_back(v0NodeID);
+    REQUIRE(check(qSet, false));
+
+    qSet.threshold = 2;
+    REQUIRE(check(qSet, false));
+
+    qSet.threshold = 1;
+    REQUIRE(check(qSet, true));
+
+    SCPQuorumSet qSet2;
+    qSet2.threshold = 1;
+    qSet2.validators.push_back(v1NodeID);
+    REQUIRE(check(qSet2, false));
+
+    qSet2.innerSets.emplace_back(qSet);
+    REQUIRE(check(qSet2, true));
+
+    SCPQuorumSet qSet3;
+    qSet3.threshold = 1;
+    qSet3.validators.push_back(v2NodeID);
+    qSet3.validators.push_back(v3NodeID);
+
+    qSet3.innerSets.emplace_back(qSet2);
+    REQUIRE(check(qSet3, true));
+
+    qSet3.validators.push_back(v3NodeID);
+    REQUIRE(check(qSet3, false));
+    qSet3.validators.pop_back();
+
+    qSet3.validators.push_back(v1NodeID);
+    REQUIRE(check(qSet3, false));
+    qSet3.validators.pop_back();
+
+    qSet3.validators.push_back(v0NodeID);
+    REQUIRE(check(qSet3, false));
+}
+
+TEST_CASE("v-blocking distance", "[scp]")
+{
+    SIMULATION_CREATE_NODE(0);
+    SIMULATION_CREATE_NODE(1);
+    SIMULATION_CREATE_NODE(2);
+    SIMULATION_CREATE_NODE(3);
+    SIMULATION_CREATE_NODE(4);
+    SIMULATION_CREATE_NODE(5);
+    SIMULATION_CREATE_NODE(6);
+    SIMULATION_CREATE_NODE(7);
+
+    SCPQuorumSet qSet;
+    qSet.threshold = 2;
+    qSet.validators.push_back(v0NodeID);
+    qSet.validators.push_back(v1NodeID);
+    qSet.validators.push_back(v2NodeID);
+
+    auto check = [&](SCPQuorumSet const& qSetCheck, std::set<NodeID> const& s,
+                     int expected)
+    {
+        auto r = LocalNode::findClosestVBlocking(qSetCheck, s);
+        REQUIRE(expected == r.size());
+    };
+
+    std::set<NodeID> good;
+    good.insert(v0NodeID);
+
+    // already v-blocking
+    check(qSet, good, 0);
+
+    good.insert(v1NodeID);
+    // either v0 or v1
+    check(qSet, good, 1);
+
+    good.insert(v2NodeID);
+    // any 2 of v0..v2
+    check(qSet, good, 2);
+
+    SCPQuorumSet qSubSet1;
+    qSubSet1.threshold = 1;
+    qSubSet1.validators.push_back(v3NodeID);
+    qSubSet1.validators.push_back(v4NodeID);
+    qSubSet1.validators.push_back(v5NodeID);
+    qSet.innerSets.push_back(qSubSet1);
+
+    good.insert(v3NodeID);
+    // any 3 of v0..v3
+    check(qSet, good, 3);
+
+    good.insert(v4NodeID);
+    // v0..v2
+    check(qSet, good, 3);
+
+    qSet.threshold = 1;
+    // v0..v4
+    check(qSet, good, 5);
+
+    good.insert(v5NodeID);
+    // v0..v5
+    check(qSet, good, 6);
+
+    SCPQuorumSet qSubSet2;
+    qSubSet2.threshold = 2;
+    qSubSet2.validators.push_back(v6NodeID);
+    qSubSet2.validators.push_back(v7NodeID);
+
+    qSet.innerSets.push_back(qSubSet2);
+    // v0..v5
+    check(qSet, good, 6);
+
+    good.insert(v6NodeID);
+    // v0..v5
+    check(qSet, good, 6);
+
+    good.insert(v7NodeID);
+    // v0..v5 and one of 6,7
+    check(qSet, good, 7);
+
+    qSet.threshold = 4;
+    // v6, v7
+    check(qSet, good, 2);
+
+    qSet.threshold = 3;
+    // v0..v2
+    check(qSet, good, 3);
+
+    qSet.threshold = 2;
+    // v0..v2 and one of v6,v7
+    check(qSet, good, 4);
+}
+
 TEST_CASE("ballot protocol core5", "[scp][ballotprotocol]")
 {
     SIMULATION_CREATE_NODE(0);
@@ -442,8 +616,9 @@ TEST_CASE("ballot protocol core5", "[scp][ballotprotocol]")
 
         SCPBallot b(1, xValue);
         REQUIRE(scpNV.bumpState(0, xValue));
-        REQUIRE(scpNV.mEnvs.size() == 1);
-        verifyPrepare(scpNV.mEnvs[0], vNVSecretKey, qSetHash, 0, b);
+        REQUIRE(scpNV.mEnvs.size() == 0);
+        verifyPrepare(scpNV.getCurrentEnvelope(0, vNVNodeID), vNVSecretKey,
+                      qSetHash, 0, b);
         auto ext1 = makeExternalize(v1SecretKey, qSetHash, 0, b, 1);
         auto ext2 = makeExternalize(v2SecretKey, qSetHash, 0, b, 1);
         auto ext3 = makeExternalize(v3SecretKey, qSetHash, 0, b, 1);
@@ -451,12 +626,13 @@ TEST_CASE("ballot protocol core5", "[scp][ballotprotocol]")
         scpNV.receiveEnvelope(ext1);
         scpNV.receiveEnvelope(ext2);
         scpNV.receiveEnvelope(ext3);
-        REQUIRE(scpNV.mEnvs.size() == 2);
-        verifyConfirm(scpNV.mEnvs[1], vNVSecretKey, qSetHash, 0, 1, b, 1);
+        REQUIRE(scpNV.mEnvs.size() == 0);
+        verifyConfirm(scpNV.getCurrentEnvelope(0, vNVNodeID), vNVSecretKey,
+                      qSetHash, 0, 1, b, 1);
         scpNV.receiveEnvelope(ext4);
-        REQUIRE(scpNV.mEnvs.size() == 3);
-        verifyExternalize(scpNV.mEnvs[2], vNVSecretKey, qSetHash, 0, b,
-                          b.counter);
+        REQUIRE(scpNV.mEnvs.size() == 0);
+        verifyExternalize(scpNV.getCurrentEnvelope(0, vNVNodeID), vNVSecretKey,
+                          qSetHash, 0, b, b.counter);
     }
 
     SECTION("bumpState x")

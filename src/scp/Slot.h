@@ -32,7 +32,11 @@ class Slot : public std::enable_shared_from_this<Slot>
 
     // keeps track of all statements seen so far for this slot.
     // it is used for debugging purpose
-    std::vector<SCPStatement> mStatementsHistory;
+    // second: if the slot was fully validated at the time
+    std::vector<std::pair<SCPStatement, bool>> mStatementsHistory;
+
+    // true if the Slot was fully validated
+    bool mFullyValidated;
 
   public:
     Slot(uint64 slotIndex, SCP& SCP);
@@ -100,6 +104,9 @@ class Slot : public std::enable_shared_from_this<Slot>
     bool nominate(Value const& value, Value const& previousValue,
                   bool timedout);
 
+    bool isFullyValidated() const;
+    void setFullyValidated(bool fullyValidated);
+
     // ** status methods
 
     size_t
@@ -111,6 +118,9 @@ class Slot : public std::enable_shared_from_this<Slot>
     // returns information about the local state in JSON format
     // including historical statements if available
     void dumpInfo(Json::Value& ret);
+
+    // returns information about the quorum for a given node
+    void dumpQuorumInfo(Json::Value& ret, NodeID const& id, bool summary);
 
     // returns the hash of the QuorumSet that should be downloaded
     // with the statement.
@@ -153,5 +163,9 @@ class Slot : public std::enable_shared_from_this<Slot>
         NOMINATION_TIMER = 0,
         BALLOT_PROTOCOL_TIMER = 1
     };
+
+  protected:
+    std::vector<SCPEnvelope> getEntireCurrentState();
+    friend class TestSCP;
 };
 }
