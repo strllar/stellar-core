@@ -281,8 +281,9 @@ CommandHandler::fileNotFound(std::string const& params, std::string& retStr)
         " default). NODE_ID is either a full key (`GABCD...`), an alias "
         "(`$name`) or an abbreviated ID(`@GABCD`)."
         "If compact is set, only returns a summary version."
-        "</p><p><h1> /scp</h1>"
-        "returns a JSON object with the internal state of the SCP engine"
+        "</p><p><h1> /scp?[limit=n]</h1>"
+        "returns a JSON object with the internal state of the SCP engine for "
+        "the last n (default 2) ledgers."
         "</p><p><h1> /tx?blob=HEX</h1>"
         "submit a transaction to the network.<br>"
         "blob is a hex encoded XDR serialized 'TransactionEnvelope'<br>"
@@ -606,7 +607,7 @@ CommandHandler::quorum(std::string const& params, std::string& retStr)
         }
         else
         {
-            if (!mApp.getConfig().resolveNodeID(nID, n))
+            if (!mApp.getHerder().resolveNodeID(nID, n))
             {
                 throw std::invalid_argument("unknown name");
             }
@@ -632,7 +633,21 @@ CommandHandler::scpInfo(std::string const& params, std::string& retStr)
 {
     Json::Value root;
 
-    mApp.getHerder().dumpInfo(root);
+    std::map<std::string, std::string> retMap;
+    http::server::server::parseParams(params, retMap);
+
+    size_t lim = 2;
+    std::string limStr = retMap["limit"];
+    if (!limStr.empty())
+    {
+        size_t n = strtoul(limStr.c_str(), NULL, 0);
+        if (n != 0)
+        {
+            lim = n;
+        }
+    }
+
+    mApp.getHerder().dumpInfo(root, lim);
 
     retStr = root.toStyledString();
 }

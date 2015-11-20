@@ -96,7 +96,7 @@ Slot::recordStatement(SCPStatement const& st)
 }
 
 SCP::EnvelopeState
-Slot::processEnvelope(SCPEnvelope const& envelope)
+Slot::processEnvelope(SCPEnvelope const& envelope, bool self)
 {
     dbgAssert(envelope.statement.slotIndex == mSlotIndex);
 
@@ -115,7 +115,7 @@ Slot::processEnvelope(SCPEnvelope const& envelope)
         }
         else
         {
-            res = mBallotProtocol.processEnvelope(envelope);
+            res = mBallotProtocol.processEnvelope(envelope, self);
         }
     }
     catch (...)
@@ -136,7 +136,7 @@ Slot::processEnvelope(SCPEnvelope const& envelope)
 bool
 Slot::abandonBallot()
 {
-    return mBallotProtocol.abandonBallot();
+    return mBallotProtocol.abandonBallot(0);
 }
 
 bool
@@ -265,12 +265,26 @@ Slot::dumpInfo(Json::Value& ret)
 
     Json::Value& slotValue = slots[std::to_string(mSlotIndex)];
 
+    std::map<Hash, SCPQuorumSetPtr> qSetsUsed;
+
     int count = 0;
     for (auto const& item : mStatementsHistory)
     {
         Json::Value& v = slotValue["statements"][count++];
         v.append(envToStr(item.first));
         v.append(item.second);
+
+        Hash const& qSetHash =
+            getCompanionQuorumSetHashFromStatement(item.first);
+        auto qSet = getSCPDriver().getQSet(qSetHash);
+        qSetsUsed.insert(std::make_pair(qSetHash, qSet));
+    }
+
+    auto& qSets = slotValue["quorum_sets"];
+    for (auto const& q : qSetsUsed)
+    {
+        auto& qs = qSets[hexAbbrev(q.first)];
+        getLocalNode()->toJson(*q.second, qs);
     }
 
     slotValue["validated"] = mFullyValidated;
@@ -326,7 +340,7 @@ Slot::envToStr(SCPStatement const& st) const
 {
     std::ostringstream oss;
 
-    Hash qSetHash = getCompanionQuorumSetHashFromStatement(st);
+    Hash const& qSetHash = getCompanionQuorumSetHashFromStatement(st);
 
     oss << "{ENV@" << getSCPDriver().toShortString(st.nodeID) << " | "
         << " i: " << st.slotIndex;
@@ -339,23 +353,24 @@ Slot::envToStr(SCPStatement const& st) const
             << " | D: " << hexAbbrev(qSetHash)
             << " | b: " << ballotToStr(p.ballot)
             << " | p: " << ballotToStr(p.prepared)
-            << " | p': " << ballotToStr(p.preparedPrime) << " | nc: " << p.nC
-            << " | nP: " << p.nP;
+            << " | p': " << ballotToStr(p.preparedPrime) << " | c.n: " << p.nC
+            << " | h.n: " << p.nH;
     }
     break;
     case SCPStatementType::SCP_ST_CONFIRM:
     {
         auto const& c = st.pledges.confirm();
         oss << " | CONFIRM"
-            << " | D: " << hexAbbrev(qSetHash) << " | np: " << c.nPrepared
-            << " | c: " << ballotToStr(c.commit) << " | nP: " << c.nP;
+            << " | D: " << hexAbbrev(qSetHash)
+            << " | b: " << ballotToStr(c.ballot) << " | p.n: " << c.nPrepared
+            << " | c.n: " << c.nCommit << " | h.n: " << c.nH;
     }
     break;
     case SCPStatementType::SCP_ST_EXTERNALIZE:
     {
         auto const& ex = st.pledges.externalize();
         oss << " | EXTERNALIZE"
-            << " | c: " << ballotToStr(ex.commit) << " | nP: " << ex.nP
+            << " | c: " << ballotToStr(ex.commit) << " | h.n: " << ex.nH
             << " | (lastD): " << hexAbbrev(qSetHash);
     }
     break;

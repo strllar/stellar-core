@@ -24,8 +24,8 @@ Config::Config() : NODE_SEED(SecretKey::random())
     FORCE_SCP = false;
     LEDGER_PROTOCOL_VERSION = 1;
 
-    OVERLAY_PROTOCOL_MIN_VERSION = 4;
-    OVERLAY_PROTOCOL_VERSION = 4;
+    OVERLAY_PROTOCOL_MIN_VERSION = 5;
+    OVERLAY_PROTOCOL_VERSION = 5;
 
     VERSION_STR = STELLAR_CORE_VERSION;
     DESIRED_BASE_RESERVE = 100000000;
@@ -706,7 +706,9 @@ Config::parseNodeID(std::string configStr, PublicKey& retKey, SecretKey& sKey,
         }
         if (!resolveNodeID(configStr, retKey))
         {
-            throw std::invalid_argument("unknown key in config");
+            std::stringstream msg;
+            msg << "unknown key in config: " << configStr;
+            throw std::invalid_argument(msg.str());
         }
     }
     else
@@ -741,7 +743,9 @@ Config::parseNodeID(std::string configStr, PublicKey& retKey, SecretKey& sKey,
                 if (!VALIDATOR_NAMES.emplace(std::make_pair(nodestr,
                                                             commonName)).second)
                 {
-                    throw std::invalid_argument("naming node twice");
+                    std::stringstream msg;
+                    msg << "naming node twice: " << commonName;
+                    throw std::invalid_argument(msg.str());
                 }
             }
         }

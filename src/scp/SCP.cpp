@@ -37,7 +37,7 @@ SCP::receiveEnvelope(SCPEnvelope const& envelope)
     }
 
     uint64 slotIndex = envelope.statement.slotIndex;
-    return getSlot(slotIndex, true)->processEnvelope(envelope);
+    return getSlot(slotIndex, true)->processEnvelope(envelope, false);
 }
 
 bool
@@ -126,11 +126,13 @@ SCP::getSlot(uint64 slotIndex, bool create)
 }
 
 void
-SCP::dumpInfo(Json::Value& ret)
+SCP::dumpInfo(Json::Value& ret, size_t limit)
 {
-    for (auto& item : mKnownSlots)
+    auto it = mKnownSlots.rbegin();
+    while (it != mKnownSlots.rend() && limit-- != 0)
     {
-        item.second->dumpInfo(ret);
+        it->second->dumpInfo(ret);
+        it++;
     }
 }
 
