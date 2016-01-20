@@ -10,6 +10,7 @@
 #include <set>
 #include <utility>
 #include "scp/SCP.h"
+#include "LocalNode.h"
 #include "lib/json/json-forwards.h"
 #include "BallotProtocol.h"
 #include "NominationProtocol.h"
@@ -83,6 +84,9 @@ class Slot : public std::enable_shared_from_this<Slot>
     // returns the latest messages known for this slot
     std::vector<SCPEnvelope> getCurrentState() const;
 
+    // returns messages that helped this slot externalize
+    std::vector<SCPEnvelope> getExternalizingState() const;
+
     // records the statement in the historical record for this slot
     void recordStatement(SCPStatement const& st);
 
@@ -110,6 +114,9 @@ class Slot : public std::enable_shared_from_this<Slot>
     bool isFullyValidated() const;
     void setFullyValidated(bool fullyValidated);
 
+    // returns if a node is in the quorum originating at the local node
+    SCP::TriBool isNodeInQuorum(NodeID const& node);
+
     // ** status methods
 
     size_t
@@ -135,18 +142,11 @@ class Slot : public std::enable_shared_from_this<Slot>
     static std::vector<Value> getStatementValues(SCPStatement const& st);
 
     // returns the QuorumSet that should be used for a node given the
-    // statement
+    // statement (singleton for externalize)
     SCPQuorumSetPtr getQuorumSetFromStatement(SCPStatement const& st);
 
     // wraps a statement in an envelope (sign it, etc)
     SCPEnvelope createEnvelope(SCPStatement const& statement);
-
-    // ** helper methods to stringify ballot for logging
-    std::string getValueString(Value const& v) const;
-    std::string ballotToStr(SCPBallot const& ballot) const;
-    std::string ballotToStr(std::unique_ptr<SCPBallot> const& ballot) const;
-    std::string envToStr(SCPEnvelope const& envelope) const;
-    std::string envToStr(SCPStatement const& st) const;
 
     // ** federated agreement helper functions
 

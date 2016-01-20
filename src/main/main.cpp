@@ -35,14 +35,17 @@ enum opttag
     OPT_CMD,
     OPT_CONF,
     OPT_CONVERTID,
+    OPT_CHECKQUORUM,
     OPT_DUMPXDR,
     OPT_LOADXDR,
     OPT_FORCESCP,
     OPT_FUZZ,
     OPT_GENFUZZ,
     OPT_GENSEED,
+    OPT_GRAPHQUORUM,
     OPT_HELP,
-    OPT_INFO,
+    OPT_INFERQUORUM,
+    OPT_OFFLINEINFO,
     OPT_LOGLEVEL,
     OPT_METRIC,
     OPT_NEWDB,
@@ -55,14 +58,17 @@ static const struct option stellar_core_options[] = {
     {"c", required_argument, nullptr, OPT_CMD},
     {"conf", required_argument, nullptr, OPT_CONF},
     {"convertid", required_argument, nullptr, OPT_CONVERTID},
+    {"checkquorum", optional_argument, nullptr, OPT_CHECKQUORUM},
     {"dumpxdr", required_argument, nullptr, OPT_DUMPXDR},
     {"loadxdr", required_argument, nullptr, OPT_LOADXDR},
     {"forcescp", optional_argument, nullptr, OPT_FORCESCP},
     {"fuzz", required_argument, nullptr, OPT_FUZZ},
     {"genfuzz", required_argument, nullptr, OPT_GENFUZZ},
     {"genseed", no_argument, nullptr, OPT_GENSEED},
+    {"graphquorum", optional_argument, nullptr, OPT_GRAPHQUORUM},
     {"help", no_argument, nullptr, OPT_HELP},
-    {"info", no_argument, nullptr, OPT_INFO},
+    {"inferquorum", optional_argument, nullptr, OPT_INFERQUORUM},
+    {"offlineinfo", no_argument, nullptr, OPT_OFFLINEINFO},
     {"ll", required_argument, nullptr, OPT_LOGLEVEL},
     {"metric", required_argument, nullptr, OPT_METRIC},
     {"newdb", no_argument, nullptr, OPT_NEWDB},
@@ -77,30 +83,34 @@ usage(int err = 1)
     std::ostream& os = err ? std::cerr : std::cout;
     os << "usage: stellar-core [OPTIONS]\n"
           "where OPTIONS can be any of:\n"
-          "      --c             Command to send to local stellar-core. try "
+          "      --c             Send a command to local stellar-core. try "
           "'--c help' for more information\n"
-          "      --conf FILE     To specify a config file ('-' for STDIN, "
+          "      --conf FILE     Specify a config file ('-' for STDIN, "
           "default 'stellar-core.cfg')\n"
           "      --convertid ID  Displays ID in all known forms\n"
-          "      --dumpxdr FILE  To dump an XDR file, for debugging\n"
-          "      --loadxdr FILE  To load an XDR bucket file, for testing\n"
+          "      --dumpxdr FILE  Dump an XDR file, for debugging\n"
+          "      --loadxdr FILE  Load an XDR bucket file, for testing\n"
           "      --forcescp      Next time stellar-core is run, SCP will start "
           "with the local ledger rather than waiting to hear from the "
           "network.\n"
-          "      --fuzz FILE     To run a single fuzz input and exit\n"
+          "      --fuzz FILE     Run a single fuzz input and exit\n"
           "      --genfuzz FILE  Generate a random fuzzer input file\n "
           "      --genseed       Generate and print a random node seed\n"
-          "      --help          To display this string\n"
-          "      --info          Returns some information on the instance\n"
+          "      --help          Display this string\n"
+          "      --inferquorum   Print a quorum set inferred from history\n"
+          "      --checkquorum   Check quorum intersection from history\n"
+          "      --graphquorum   Print a quorum set graph from history\n"
+          "      --offlineinfo   Return information for an offline instance\n"
           "      --ll LEVEL      Set the log level. (redundant with --c ll but "
           "you need this form for the tests.)\n"
-          "                      LEVEL can be:\n"
+          "                      LEVEL can be: trace, debug, info, error, "
+          "fatal\n"
           "      --metric METRIC Report metric METRIC on exit\n"
           "      --newdb         Creates or restores the DB to the genesis "
           "ledger\n"
           "      --newhist ARCH  Initialize the named history archive ARCH\n"
-          "      --test          To run self-tests\n"
-          "      --version       To print version information\n";
+          "      --test          Run self-tests\n"
+          "      --version       Print version information\n";
     exit(err);
 }
 
@@ -161,7 +171,7 @@ sendCommand(std::string const& command, const std::vector<char*>& rest,
     }
 }
 
-bool
+static bool
 checkInitialized(Application::pointer app)
 {
     try
@@ -179,7 +189,7 @@ checkInitialized(Application::pointer app)
     return true;
 }
 
-void
+static void
 setForceSCPFlag(Config const& cfg, bool isOn)
 {
     VirtualClock clock;
@@ -211,8 +221,8 @@ setForceSCPFlag(Config const& cfg, bool isOn)
     }
 }
 
-void
-showInfo(Config const& cfg)
+static void
+showOfflineInfo(Config const& cfg)
 {
     // needs real time to display proper stats
     VirtualClock clock(VirtualClock::REAL_TIME);
@@ -227,7 +237,7 @@ showInfo(Config const& cfg)
     }
 }
 
-void
+static void
 loadXdr(Config const& cfg, std::string const& bucketFile)
 {
     VirtualClock clock;
@@ -245,7 +255,43 @@ loadXdr(Config const& cfg, std::string const& bucketFile)
     }
 }
 
-void
+static void
+inferQuorumAndWrite(Config const& cfg)
+{
+    InferredQuorum iq;
+    {
+        VirtualClock clock;
+        Application::pointer app = Application::create(clock, cfg);
+        iq = app->getHistoryManager().inferQuorum();
+    }
+    LOG(INFO) << "Inferred quorum";
+    std::cout << iq.toString(cfg) << std::endl;
+}
+
+static void
+checkQuorumIntersection(Config const& cfg)
+{
+    VirtualClock clock;
+    Application::pointer app = Application::create(clock, cfg);
+    InferredQuorum iq = app->getHistoryManager().inferQuorum();
+    iq.checkQuorumIntersection(cfg);
+}
+
+static void
+writeQuorumGraph(Config const& cfg)
+{
+    InferredQuorum iq;
+    {
+        VirtualClock clock;
+        Application::pointer app = Application::create(clock, cfg);
+        iq = app->getHistoryManager().inferQuorum();
+    }
+    std::string filename = "quorumgraph.dot";
+    iq.writeQuorumGraph(cfg, filename);
+    LOG(INFO) << "Wrote quorum graph to " << filename;
+}
+
+static void
 initializeDatabase(Config& cfg)
 {
     VirtualClock clock;
@@ -256,7 +302,7 @@ initializeDatabase(Config& cfg)
     LOG(INFO) << "*";
 }
 
-int
+static int
 initializeHistories(Config& cfg, vector<string> newHistories)
 {
     VirtualClock clock;
@@ -270,7 +316,7 @@ initializeHistories(Config& cfg, vector<string> newHistories)
     return 0;
 }
 
-int
+static int
 startApp(string cfgFile, Config& cfg)
 {
     LOG(INFO) << "Starting stellar-core " << STELLAR_CORE_VERSION;
@@ -331,8 +377,11 @@ main(int argc, char* const* argv)
     std::vector<char*> rest;
 
     optional<bool> forceSCP = nullptr;
+    bool inferQuorum = false;
+    bool checkQuorum = false;
+    bool graphQuorum = false;
     bool newDB = false;
-    bool getInfo = false;
+    bool getOfflineInfo = false;
     std::string loadXdrBucket = "";
     std::vector<std::string> newHistories;
     std::vector<std::string> metrics;
@@ -376,8 +425,17 @@ main(int argc, char* const* argv)
             std::cout << "Public: " << key.getStrKeyPublic() << std::endl;
             return 0;
         }
-        case OPT_INFO:
-            getInfo = true;
+        case OPT_INFERQUORUM:
+            inferQuorum = true;
+            break;
+        case OPT_CHECKQUORUM:
+            checkQuorum = true;
+            break;
+        case OPT_GRAPHQUORUM:
+            graphQuorum = true;
+            break;
+        case OPT_OFFLINEINFO:
+            getOfflineInfo = true;
             break;
         case OPT_LOGLEVEL:
             logLevel = Logging::getLLfromString(std::string(optarg));
@@ -440,17 +498,24 @@ main(int argc, char* const* argv)
 
         cfg.REPORT_METRICS = metrics;
 
-        if (forceSCP || newDB || getInfo || !loadXdrBucket.empty())
+        if (forceSCP || newDB || getOfflineInfo || !loadXdrBucket.empty()
+            || inferQuorum || graphQuorum || checkQuorum)
         {
             setNoListen(cfg);
             if (newDB)
                 initializeDatabase(cfg);
             if (forceSCP)
                 setForceSCPFlag(cfg, *forceSCP);
-            if (getInfo)
-                showInfo(cfg);
+            if (getOfflineInfo)
+                showOfflineInfo(cfg);
             if (!loadXdrBucket.empty())
                 loadXdr(cfg, loadXdrBucket);
+            if (inferQuorum)
+                inferQuorumAndWrite(cfg);
+            if (checkQuorum)
+                checkQuorumIntersection(cfg);
+            if (graphQuorum)
+                writeQuorumGraph(cfg);
             return 0;
         }
         else if (!newHistories.empty())

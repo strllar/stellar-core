@@ -57,7 +57,7 @@
       <PreprocessorDefinitions>NOMINMAX;ASIO_STANDALONE;USE_POSTGRES;_WINSOCK_DEPRECATED_NO_WARNINGS;SODIUM_STATIC;ASIO_SEPARATE_COMPILATION;ASIO_ERROR_CATEGORY_NOEXCEPT=noexcept;_CRT_SECURE_NO_WARNINGS;_WIN32_WINNT=0x0501;WIN32;_MBCS;%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <MultiProcessorCompilation>true</MultiProcessorCompilation>
       <MinimalRebuild>false</MinimalRebuild>
-      <DisableSpecificWarnings>4582;4583;4408;4512;4127;4324;4100;4510</DisableSpecificWarnings>
+      <DisableSpecificWarnings>4060;4100;4127;4324;4408;4510;4512;4582;4583;4592</DisableSpecificWarnings>
       <RuntimeLibrary>MultiThreadedDebugDLL</RuntimeLibrary>
       <BrowseInformation>false</BrowseInformation>
       <ControlFlowGuard>
@@ -112,7 +112,7 @@
       <PreprocessorDefinitions>NOMINMAX;ASIO_STANDALONE;USE_POSTGRES;_WINSOCK_DEPRECATED_NO_WARNINGS;SODIUM_STATIC;ASIO_SEPARATE_COMPILATION;ASIO_ERROR_CATEGORY_NOEXCEPT=noexcept;_CRT_SECURE_NO_WARNINGS;_WIN32_WINNT=0x0501;WIN32;_MBCS;%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <BrowseInformation>false</BrowseInformation>
       <MultiProcessorCompilation>true</MultiProcessorCompilation>
-      <DisableSpecificWarnings>4582;4583;4408;4512;4127;4324;4100;4510</DisableSpecificWarnings>
+      <DisableSpecificWarnings>4060;4100;4127;4324;4408;4510;4512;4582;4583;4592</DisableSpecificWarnings>
       <ControlFlowGuard>false</ControlFlowGuard>
     </ClCompile>
     <Link>
@@ -147,6 +147,7 @@
   </ItemDefinitionGroup>
   <ItemGroup>
     <ClCompile Include="..\..\src\bucket\Bucket.cpp" />
+    <ClCompile Include="..\..\src\bucket\BucketApplicator.cpp" />
     <ClCompile Include="..\..\src\bucket\BucketList.cpp" />
     <ClCompile Include="..\..\src\bucket\BucketManagerImpl.cpp" />
     <ClCompile Include="..\..\src\bucket\BucketTests.cpp" />
@@ -166,15 +167,16 @@
     <ClCompile Include="..\..\src\herder\LedgerCloseData.cpp" />
     <ClCompile Include="..\..\src\herder\PendingEnvelopes.cpp" />
     <ClCompile Include="..\..\src\herder\TxSetFrame.cpp" />
-    <ClCompile Include="..\..\src\history\CatchupStateMachine.cpp" />
     <ClCompile Include="..\..\src\history\FileTransferInfo.cpp" />
     <ClCompile Include="..\..\src\history\HistoryArchive.cpp" />
     <ClCompile Include="..\..\src\history\HistoryManagerImpl.cpp" />
     <ClCompile Include="..\..\src\history\HistoryTests.cpp" />
-    <ClCompile Include="..\..\src\history\PublishStateMachine.cpp" />
+    <ClCompile Include="..\..\src\history\HistoryWork.cpp" />
+    <ClCompile Include="..\..\src\history\StateSnapshot.cpp" />
     <ClCompile Include="..\..\src\ledger\AccountFrame.cpp" />
     <ClCompile Include="..\..\src\ledger\LedgerDelta.cpp" />
     <ClCompile Include="..\..\src\ledger\EntryFrame.cpp" />
+    <ClCompile Include="..\..\src\ledger\LedgerDeltaTests.cpp" />
     <ClCompile Include="..\..\src\ledger\LedgerEntryTests.cpp" />
     <ClCompile Include="..\..\src\ledger\LedgerHeaderFrame.cpp" />
     <ClCompile Include="..\..\src\ledger\LedgerHeaderTests.cpp" />
@@ -303,10 +305,15 @@
     <ClCompile Include="..\..\src\transactions\ChangeTrustOpFrame.cpp" />
     <ClCompile Include="..\..\src\util\Logging.cpp" />
     <ClCompile Include="..\..\src\util\Uint128Tests.cpp" />
+    <ClCompile Include="..\..\src\work\Work.cpp" />
+    <ClCompile Include="..\..\src\work\WorkManagerImpl.cpp" />
+    <ClCompile Include="..\..\src\work\WorkParent.cpp" />
+    <ClCompile Include="..\..\src\work\WorkTests.cpp" />
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="..\..\lib\catch.hpp" />
     <ClInclude Include="..\..\src\bucket\Bucket.h" />
+    <ClInclude Include="..\..\src\bucket\BucketApplicator.h" />
     <ClInclude Include="..\..\src\bucket\BucketList.h" />
     <ClInclude Include="..\..\src\bucket\BucketManager.h" />
     <ClInclude Include="..\..\src\bucket\BucketManagerImpl.h" />
@@ -320,6 +327,8 @@
     <ClInclude Include="..\..\src\crypto\SecretKey.h" />
     <ClInclude Include="..\..\src\crypto\StrKey.h" />
     <ClInclude Include="..\..\src\database\Database.h" />
+    <ClInclude Include="..\..\src\history\HistoryWork.h" />
+    <ClInclude Include="..\..\src\history\StateSnapshot.h" />
     <ClInclude Include="..\..\src\ledger\LedgerTestUtils.h" />
     <ClInclude Include="..\..\src\main\ExternalQueue.h" />
     <ClInclude Include="..\..\src\overlay\LoadManager.h" />
@@ -330,12 +339,10 @@
     <ClInclude Include="..\..\src\herder\LedgerCloseData.h" />
     <ClInclude Include="..\..\src\herder\PendingEnvelopes.h" />
     <ClInclude Include="..\..\src\herder\TxSetFrame.h" />
-    <ClInclude Include="..\..\src\history\CatchupStateMachine.h" />
     <ClInclude Include="..\..\src\history\FileTransferInfo.h" />
     <ClInclude Include="..\..\src\history\HistoryArchive.h" />
     <ClInclude Include="..\..\src\history\HistoryManager.h" />
     <ClInclude Include="..\..\src\history\HistoryManagerImpl.h" />
-    <ClInclude Include="..\..\src\history\PublishStateMachine.h" />
     <ClInclude Include="..\..\src\ledger\AccountFrame.h" />
     <ClInclude Include="..\..\src\ledger\LedgerDelta.h" />
     <ClInclude Include="..\..\src\ledger\EntryFrame.h" />
@@ -418,6 +425,10 @@
     <ClInclude Include="..\..\src\util\Timer.h" />
     <ClInclude Include="..\..\src\util\types.h" />
     <ClInclude Include="..\..\src\util\XDRStream.h" />
+    <ClInclude Include="..\..\src\work\Work.h" />
+    <ClInclude Include="..\..\src\work\WorkManager.h" />
+    <ClInclude Include="..\..\src\work\WorkManagerImpl.h" />
+    <ClInclude Include="..\..\src\work\WorkParent.h" />
     <ClInclude Include="src\generated\xdr\Stellar-ledger-entries.h" />
     <ClInclude Include="src\generated\xdr\Stellar-ledger.h" />
     <ClInclude Include="src\generated\xdr\Stellar-overlay.h" />

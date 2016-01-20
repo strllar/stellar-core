@@ -58,6 +58,7 @@ class ApplicationImpl : public Application
     virtual Database& getDatabase() override;
     virtual PersistentState& getPersistentState() override;
     virtual CommandHandler& getCommandHandler() override;
+    virtual WorkManager& getWorkManager() override;
 
     virtual asio::io_service& getWorkerIOService() override;
 
@@ -81,6 +82,8 @@ class ApplicationImpl : public Application
                               uint32_t txRate, bool autoRate) override;
 
     virtual void checkDB() override;
+
+    virtual void maintenance() override;
 
     virtual void applyCfgCommands() override;
 
@@ -117,6 +120,7 @@ class ApplicationImpl : public Application
     std::unique_ptr<HistoryManager> mHistoryManager;
     std::unique_ptr<ProcessManager> mProcessManager;
     std::unique_ptr<CommandHandler> mCommandHandler;
+    std::shared_ptr<WorkManager> mWorkManager;
     std::unique_ptr<PersistentState> mPersistentState;
     std::unique_ptr<LoadGenerator> mLoadGenerator;
 

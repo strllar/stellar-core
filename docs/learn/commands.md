@@ -25,7 +25,7 @@ forcescp doesn't change the requirements for quorum so although this node will e
 * **--fuzz FILE**: Run a single fuzz input and exit.
 * **--genfuzz FILE**:  Generate a random fuzzer input file.
 * **--genseed**: Generate and print a random public/private key and then exit.
-* **--info**: Shortcut for `--c info`
+* **--offlineinfo**: Returns an output similar to `--c info` for an offline instance
 * **--ll LEVEL**: Set the log level. It is redundant with `--c ll` but we need this form if you want to change the log level during test runs.
 * **--metric METRIC**: Report metric METRIC on exit. Used for gathering a metric cumulatively during a test run.
 * **--newdb**: Clears the local database and resets it to the genesis ledger. If you connect to the network after that it will catch up from scratch. 
@@ -94,7 +94,8 @@ debugging purpose).
   sets or creates a cursor identified by `ID` with value `N`. ID is an uppercase AlphaNum, N is an uint32 that represents the last ledger sequence number that the instance ID processed.
   Cursors are used by dependent services to tell stellar-core which data can be safely deleted by the instance.
   The data is historical data stored in the SQL tables such as txhistory or ledgerheaders. When all consumers processed the data for ledger sequence N the data can be safely removed by the instance.
-  The actual deletion is performed by invoking the `maintenance` endpoint.
+  The actual deletion is performed by invoking the `maintenance` endpoint or on startup.
+  See also `dropcursor`.
 
 * **scp**
   `/scp?[limit=n]

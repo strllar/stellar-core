@@ -24,10 +24,12 @@
 #include "medida/metrics_registry.h"
 #include "xdrpp/marshal.h"
 #include "util/basen.h"
+#include "util/XDRStream.h"
 
 #include <ctime>
 
 using namespace std;
+using namespace soci;
 
 namespace stellar
 {
@@ -123,7 +125,8 @@ HerderImpl::~HerderImpl()
 Herder::State
 HerderImpl::getState() const
 {
-    return mTrackingSCP ? HERDER_TRACKING_STATE : HERDER_SYNCING_STATE;
+    return (mTrackingSCP && mLastTrackingSCP) ? HERDER_TRACKING_STATE
+                                              : HERDER_SYNCING_STATE;
 }
 
 void
@@ -162,14 +165,9 @@ HerderImpl::bootstrap()
     assert(mSCP.isValidator());
     assert(mApp.getConfig().FORCE_SCP);
 
-    // setup a sufficient state that we can participate in consensus
-    auto const& lcl = mLedgerManager.getLastClosedLedgerHeader();
-    mTrackingSCP =
-        make_unique<ConsensusData>(lcl.header.ledgerSeq, lcl.header.scpValue);
     mLedgerManager.setState(LedgerManager::LM_SYNCED_STATE);
     stateChanged();
 
-    trackingHeartBeat();
     mLastTrigger = mApp.getClock().now() - Herder::EXP_LEDGER_TIMESPAN_SECONDS;
     ledgerClosed();
 }
@@ -602,6 +600,12 @@ HerderImpl::valueExternalized(uint64 slotIndex, Value const& value)
     }
 
     mTrackingSCP = make_unique<ConsensusData>(slotIndex, b);
+
+    if (!mLastTrackingSCP)
+    {
+        mLastTrackingSCP = make_unique<ConsensusData>(*mTrackingSCP);
+    }
+
     trackingHeartBeat();
 
     TxSetFramePtr externalizedSet = mPendingEnvelopes.getTxSet(txSetHash);
@@ -610,6 +614,9 @@ HerderImpl::valueExternalized(uint64 slotIndex, Value const& value)
     // we do not want it to trigger while downloading the current set
     // and there is no point in taking a position after the round is over
     mTriggerTimer.cancel();
+
+    // save the SCP messages in the database
+    saveSCPHistory(slotIndex);
 
     // tell the LedgerManager that this value got externalized
     // LedgerManager will perform the proper action based on its internal
@@ -987,10 +994,10 @@ HerderImpl::recvSCPEnvelope(SCPEnvelope const& envelope)
         // when tracking, we can filter messages based on the information we got
         // from consensus for the max ledger
 
-        // note that this filtering will cause a node started with force scp
+        // note that this filtering will cause a node on startup
         // to potentially drop messages outside of the bracket
-        // (so in general, nodes should not be started with force scp if
-        // their state is very old)
+        // causing it to discard CONSENSUS_STUCK_TIMEOUT_SECONDS worth of
+        // ledger closing
         maxLedgerSeq = nextConsensusLedgerIndex() + LEDGER_VALIDITY_BRACKET;
     }
 
@@ -1406,9 +1413,9 @@ HerderImpl::triggerNextLedger(uint32_t ledgerSeqToTrigger)
 }
 
 bool
-HerderImpl::isQuorumSetSane(NodeID const& nodeID, SCPQuorumSet const& qSet)
+HerderImpl::isQuorumSetSane(SCPQuorumSet const& qSet, bool extraChecks)
 {
-    return mSCP.getLocalNode()->isQuorumSetSane(nodeID, qSet);
+    return LocalNode::isQuorumSetSane(qSet, extraChecks);
 }
 
 bool
@@ -1480,7 +1487,7 @@ HerderImpl::dumpInfo(Json::Value& ret, size_t limit)
 
     mSCP.dumpInfo(ret, limit);
 
-    mPendingEnvelopes.dumpInfo(ret);
+    mPendingEnvelopes.dumpInfo(ret, limit);
 }
 
 void
@@ -1549,6 +1556,14 @@ HerderImpl::persistSCPState(uint64 slot)
 void
 HerderImpl::restoreSCPState()
 {
+    // setup a sufficient state that we can participate in consensus
+    auto const& lcl = mLedgerManager.getLastClosedLedgerHeader();
+    mTrackingSCP =
+        make_unique<ConsensusData>(lcl.header.ledgerSeq, lcl.header.scpValue);
+
+    trackingHeartBeat();
+
+    // load saved state from database
     auto latest64 =
         mApp.getPersistentState().getState(PersistentState::kLastSCPData);
 
@@ -1660,6 +1675,12 @@ void
 HerderImpl::herderOutOfSync()
 {
     CLOG(INFO, "Herder") << "Lost track of consensus";
+
+    Json::Value v;
+    dumpInfo(v, 20);
+    std::string s = v.toStyledString();
+    CLOG(INFO, "Herder") << "Out of sync context: " << s;
+
     mSCPMetrics.mLostSync.Mark();
     stateChanged();
 
@@ -1667,5 +1688,248 @@ HerderImpl::herderOutOfSync()
     mLastTrackingSCP.reset(mTrackingSCP.release());
 
     processSCPQueue();
+}
+
+void
+HerderImpl::saveSCPHistory(uint64 index)
+{
+    uint32 seq = static_cast<uint32>(index);
+
+    auto envs = mSCP.getExternalizingState(seq);
+    if (!envs.empty())
+    {
+        std::unordered_map<Hash, SCPQuorumSetPtr> usedQSets;
+
+        auto& db = mApp.getDatabase();
+
+        soci::transaction txscope(db.getSession());
+
+        {
+            auto prepClean = db.getPreparedStatement(
+                "DELETE FROM scphistory WHERE ledgerseq =:l");
+
+            auto& st = prepClean.statement();
+            st.exchange(use(seq));
+            st.define_and_bind();
+            {
+                auto timer = db.getDeleteTimer("scphistory");
+                st.execute(true);
+            }
+        }
+        for (auto const& e : envs)
+        {
+            auto const& qHash =
+                Slot::getCompanionQuorumSetHashFromStatement(e.statement);
+            usedQSets.insert(std::make_pair(qHash, getQSet(qHash)));
+
+            std::string nodeIDStrKey =
+                PubKeyUtils::toStrKey(e.statement.nodeID);
+
+            auto envelopeBytes(xdr::xdr_to_opaque(e));
+
+            std::string envelopeEncoded;
+            envelopeEncoded = bn::encode_b64(envelopeBytes);
+
+            auto prepEnv =
+                db.getPreparedStatement("INSERT INTO scphistory "
+                                        "(nodeid, ledgerseq, envelope) VALUES "
+                                        "(:n, :l, :e)");
+
+            auto& st = prepEnv.statement();
+            st.exchange(use(nodeIDStrKey));
+            st.exchange(use(seq));
+            st.exchange(use(envelopeEncoded));
+            st.define_and_bind();
+            {
+                auto timer = db.getInsertTimer("scphistory");
+                st.execute(true);
+            }
+            if (st.get_affected_rows() != 1)
+            {
+                throw std::runtime_error("Could not update data in SQL");
+            }
+        }
+
+        for (auto const& p : usedQSets)
+        {
+            std::string qSetH = binToHex(p.first);
+
+            auto prepUpQSet = db.getPreparedStatement(
+                "UPDATE scpquorums SET "
+                "lastledgerseq = :l WHERE qsethash = :h");
+
+            auto& stUp = prepUpQSet.statement();
+            stUp.exchange(use(seq));
+            stUp.exchange(use(qSetH));
+            stUp.define_and_bind();
+            {
+                auto timer = db.getInsertTimer("scpquorums");
+                stUp.execute(true);
+            }
+            if (stUp.get_affected_rows() != 1)
+            {
+                auto qSetBytes(xdr::xdr_to_opaque(*p.second));
+
+                std::string qSetEncoded;
+                qSetEncoded = bn::encode_b64(qSetBytes);
+
+                auto prepInsQSet = db.getPreparedStatement(
+                    "INSERT INTO scpquorums "
+                    "(qsethash, lastledgerseq, qset) VALUES "
+                    "(:h, :l, :v);");
+
+                auto& stIns = prepInsQSet.statement();
+                stIns.exchange(use(qSetH));
+                stIns.exchange(use(seq));
+                stIns.exchange(use(qSetEncoded));
+                stIns.define_and_bind();
+                {
+                    auto timer = db.getInsertTimer("scpquorums");
+                    stIns.execute(true);
+                }
+                if (stIns.get_affected_rows() != 1)
+                {
+                    throw std::runtime_error("Could not update data in SQL");
+                }
+            }
+        }
+
+        txscope.commit();
+    }
+}
+
+size_t
+Herder::copySCPHistoryToStream(Database& db, soci::session& sess,
+                               uint32_t ledgerSeq, uint32_t ledgerCount,
+                               XDROutputFileStream& scpHistory)
+{
+    uint32_t begin = ledgerSeq, end = ledgerSeq + ledgerCount;
+    size_t n = 0;
+
+    // all known quorum sets
+    std::unordered_map<Hash, SCPQuorumSet> qSets;
+
+    for (uint32_t curLedgerSeq = begin; curLedgerSeq < end; curLedgerSeq++)
+    {
+        // SCP envelopes for this ledger
+        // quorum sets missing in this batch of envelopes
+        std::set<Hash> missingQSets;
+
+        SCPHistoryEntry hEntryV;
+        hEntryV.v(0);
+        auto& hEntry = hEntryV.v0();
+        auto& lm = hEntry.ledgerMessages;
+        lm.ledgerSeq = curLedgerSeq;
+
+        auto& curEnvs = lm.messages;
+
+        // fetch SCP messages from history
+        {
+            std::string envB64;
+
+            auto timer = db.getSelectTimer("scphistory");
+
+            soci::statement st =
+                (sess.prepare << "SELECT envelope FROM scphistory "
+                                 "WHERE ledgerseq = :cur ORDER BY nodeid",
+                 into(envB64), use(curLedgerSeq));
+
+            st.execute(true);
+
+            while (st.got_data())
+            {
+                curEnvs.emplace_back();
+                auto& env = curEnvs.back();
+
+                std::vector<uint8_t> envBytes;
+                bn::decode_b64(envB64, envBytes);
+
+                xdr::xdr_get g1(&envBytes.front(), &envBytes.back() + 1);
+                xdr_argpack_archive(g1, env);
+
+                // record new quorum sets encountered
+                Hash const& qSetHash =
+                    Slot::getCompanionQuorumSetHashFromStatement(env.statement);
+                if (qSets.find(qSetHash) == qSets.end())
+                {
+                    missingQSets.insert(qSetHash);
+                }
+
+                n++;
+
+                st.fetch();
+            }
+        }
+
+        // fetch the quorum sets from the db
+        for (auto const& q : missingQSets)
+        {
+            std::string qset64, qSetHashHex;
+
+            hEntry.quorumSets.emplace_back();
+            auto& qset = hEntry.quorumSets.back();
+
+            qSetHashHex = binToHex(q);
+
+            auto timer = db.getSelectTimer("scpquorums");
+
+            soci::statement st = (sess.prepare << "SELECT qset FROM scpquorums "
+                                                  "WHERE qsethash = :h",
+                                  into(qset64), use(qSetHashHex));
+
+            st.execute(true);
+
+            if (!st.got_data())
+            {
+                throw std::runtime_error(
+                    "corrupt database state: missing quorum set");
+            }
+
+            std::vector<uint8_t> qSetBytes;
+            bn::decode_b64(qset64, qSetBytes);
+
+            xdr::xdr_get g1(&qSetBytes.front(), &qSetBytes.back() + 1);
+            xdr_argpack_archive(g1, qset);
+        }
+
+        if (curEnvs.size() != 0)
+        {
+            scpHistory.writeOne(hEntryV);
+        }
+    }
+
+    return n;
+}
+
+void
+Herder::dropAll(Database& db)
+{
+    db.getSession() << "DROP TABLE IF EXISTS scphistory";
+
+    db.getSession() << "DROP TABLE IF EXISTS scpquorums";
+
+    db.getSession() << "CREATE TABLE scphistory ("
+                       "nodeid      CHARACTER(56) NOT NULL,"
+                       "ledgerseq   INT NOT NULL CHECK (ledgerseq >= 0),"
+                       "envelope    TEXT NOT NULL"
+                       ")";
+
+    db.getSession() << "CREATE INDEX scpenvsbyseq ON scphistory(ledgerseq)";
+
+    db.getSession() << "CREATE TABLE scpquorums ("
+                       "qsethash      CHARACTER(64) NOT NULL,"
+                       "lastledgerseq INT NOT NULL CHECK (lastledgerseq >= 0),"
+                       "qset          TEXT NOT NULL,"
+                       "PRIMARY KEY (qsethash)"
+                       ")";
+}
+
+void
+Herder::deleteOldEntries(Database& db, uint32_t ledgerSeq)
+{
+    db.getSession() << "DELETE FROM scphistory WHERE ledgerseq <= "
+                    << ledgerSeq;
+    db.getSession() << "DELETE FROM scpquorums WHERE lastledgerseq <= "
+                    << ledgerSeq;
 }
 }

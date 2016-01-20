@@ -425,7 +425,7 @@ CommandHandler::info(std::string const& params, std::string& retStr)
     auto& info = root["info"];
 
     if (mApp.getConfig().UNSAFE_QUORUM)
-        info["UNSAFE_QUORUM"] = "ALERT!!! QUORUM UNSAFE";
+        info["UNSAFE_QUORUM"] = "UNSAFE QUORUM ALLOWED";
     info["build"] = STELLAR_CORE_VERSION;
     info["protocol_version"] = mApp.getConfig().LEDGER_PROTOCOL_VERSION;
     info["state"] = mApp.getStateHuman();
@@ -501,9 +501,13 @@ CommandHandler::catchup(std::string const& params, std::string& retStr)
         {
             mode = HistoryManager::CATCHUP_MINIMAL;
         }
+        else if (modeP->second == std::string("recent"))
+        {
+            mode = HistoryManager::CATCHUP_RECENT;
+        }
         else
         {
-            retStr = "Mode should be either 'minimal' or 'complete'";
+            retStr = "Mode should be either 'minimal', 'recent' or 'complete'";
             return;
         }
     }
@@ -513,7 +517,9 @@ CommandHandler::catchup(std::string const& params, std::string& retStr)
               std::to_string(ledger) + std::string(" in mode ") +
               std::string(mode == HistoryManager::CATCHUP_COMPLETE
                               ? "CATCHUP_COMPLETE"
-                              : "CATCHUP_MINIMAL"));
+                              : (mode == HistoryManager::CATCHUP_RECENT
+                                     ? "CATCHUP_RECENT"
+                                     : "CATCHUP_MINIMAL")));
 }
 
 void
@@ -529,27 +535,21 @@ CommandHandler::checkpoint(std::string const& params, std::string& retStr)
     auto& hm = mApp.getHistoryManager();
     if (hm.hasAnyWritableHistoryArchive())
     {
-        size_t done = 0;
+        size_t initFail = hm.getPublishFailureCount();
+        size_t initDone = hm.getPublishSuccessCount() + initFail;
         asio::error_code ec;
         uint32_t lclNum = mApp.getLedgerManager().getLastClosedLedgerNum();
         uint32_t ledgerNum = mApp.getLedgerManager().getLedgerNum();
         hm.queueCurrentHistory();
-        size_t toPublish =
-            hm.publishQueuedHistory([&done, &ec](asio::error_code const& ec2)
-                                    {
-                                        if (ec2)
-                                        {
-                                            ec = ec2;
-                                        }
-                                        ++done;
-                                    });
-        while (done != toPublish)
+        size_t toPublish = hm.publishQueuedHistory();
+        while (((hm.getPublishSuccessCount() + hm.getPublishFailureCount()) -
+                initDone) != toPublish)
         {
             mApp.getClock().crank(false);
         }
-        if (ec)
+        if (initFail != hm.getPublishFailureCount())
         {
-            retStr = std::string("Publish failed: ") + ec.message();
+            retStr = std::string("Publish failed");
         }
         else
         {
@@ -825,8 +825,7 @@ CommandHandler::maintenance(std::string const& params, std::string& retStr)
     http::server::server::parseParams(params, map);
     if (map["queue"] == "true")
     {
-        ExternalQueue ps(mApp);
-        ps.process();
+        mApp.maintenance();
         retStr = "Done";
     }
     else

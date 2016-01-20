@@ -64,6 +64,16 @@ class Config : public std::enable_shared_from_this<Config>
     // meaning catchup "minimally", using deltas to the most recent snapshot.
     bool CATCHUP_COMPLETE;
 
+    // Number of "recent" ledgers before the current ledger to include in a
+    // "minimal" catchup. Default is 0, and if CATCHUP_COMPLETE is set to
+    // true, this is ignored.
+    //
+    // If you want, say, a week of history, set this to 120000.
+    uint32_t CATCHUP_RECENT;
+
+    // Enables or disables automatic maintenance on startup
+    bool MAINTENANCE_ON_STARTUP;
+
     // A config parameter that enables synthetic load generation on demand,
     // using the `generateload` runtime command (see CommandHandler.cpp). This
     // option only exists for stress-testing and should not be enabled in
@@ -169,6 +179,7 @@ class Config : public std::enable_shared_from_this<Config>
     void load(std::string const& filename);
 
     std::string toShortString(PublicKey const& pk) const;
+    std::string toStrKey(PublicKey const& pk, bool& isAlias) const;
     std::string toStrKey(PublicKey const& pk) const;
     bool resolveNodeID(std::string const& s, PublicKey& retKey) const;
 };

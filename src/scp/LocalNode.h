@@ -33,12 +33,12 @@ class LocalNode
 
     // returns true if quorum set is well formed
     // updates knownNodes as it encounters new ones
-    bool isQuorumSetSaneInternal(NodeID const& nodeID, SCPQuorumSet const& qSet,
-                                 std::set<NodeID>& knownNodes);
+    static bool isQuorumSetSaneInternal(SCPQuorumSet const& qSet,
+                                        std::set<NodeID>& knownNodes,
+                                        bool extraChecks);
 
-    void adjustQSetHelper(SCPQuorumSet& qSet);
-    // adjust qset such that self is a member of all slices
-    void adjustQSet(SCPQuorumSet& qSet);
+    // normalize quorum set
+    void normalizeQSet(SCPQuorumSet& qSet);
 
   public:
     LocalNode(SecretKey const& secretKey, bool isValidator,
@@ -46,8 +46,8 @@ class LocalNode
 
     NodeID const& getNodeID();
 
-    // returns if a nodeID's quorum set passes sanity checks
-    bool isQuorumSetSane(NodeID const& nodeID, SCPQuorumSet const& qSet);
+    // returns if a quorum set passes sanity checks
+    static bool isQuorumSetSane(SCPQuorumSet const& qSet, bool extraChecks);
 
     void updateQuorumSet(SCPQuorumSet const& qSet);
 
@@ -55,6 +55,11 @@ class LocalNode
     Hash const& getQuorumSetHash();
     SecretKey const& getSecretKey();
     bool isValidator();
+
+    SCP::TriBool isNodeInQuorum(
+        NodeID const& node,
+        std::function<SCPQuorumSetPtr(SCPStatement const&)> const& qfun,
+        std::map<NodeID, std::vector<SCPStatement const*>> const& map) const;
 
     // returns the quorum set {{X}}
     static SCPQuorumSetPtr getSingletonQSet(NodeID const& nodeID);
@@ -67,17 +72,13 @@ class LocalNode
     // normalized between 0-UINT64_MAX
     static uint64 getNodeWeight(NodeID const& nodeID, SCPQuorumSet const& qset);
 
-    // Tests this node against nodeSet for the specified qSethash. Triggers the
-    // retrieval of qSetHash for this node and may throw a QuorumSlicesNotFound
-    // exception
+    // Tests this node against nodeSet for the specified qSethash.
     static bool isQuorumSlice(SCPQuorumSet const& qSet,
                               std::vector<NodeID> const& nodeSet);
     static bool isVBlocking(SCPQuorumSet const& qSet,
                             std::vector<NodeID> const& nodeSet);
 
     // Tests this node against a map of nodeID -> T for the specified qSetHash.
-    // Triggers the retrieval of qSetHash for this node and may throw a
-    // QuorumSlicesNotFound exception.
 
     // `isVBlocking` tests if the filtered nodes V are a v-blocking set for
     // this node.
@@ -103,17 +104,21 @@ class LocalNode
                  return true;
              });
 
-    // computes the distance to the set of v-blocking sets given a set of nodes
+    // computes the distance to the set of v-blocking sets given
+    // a set of nodes that agree (but can fail)
+    // excluded, if set will be skipped altogether
     static std::vector<NodeID>
     findClosestVBlocking(SCPQuorumSet const& qset,
-                         std::set<NodeID> const& nodes);
+                         std::set<NodeID> const& nodes, NodeID const* excluded);
+
     static std::vector<NodeID> findClosestVBlocking(
         SCPQuorumSet const& qset, std::map<NodeID, SCPEnvelope> const& map,
         std::function<bool(SCPStatement const&)> const& filter =
             [](SCPStatement const&)
         {
             return true;
-        });
+        },
+        NodeID const* excluded = nullptr);
 
     void toJson(SCPQuorumSet const& qSet, Json::Value& value) const;
     std::string to_string(SCPQuorumSet const& qSet) const;

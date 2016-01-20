@@ -35,6 +35,8 @@ Config::Config() : NODE_SEED(SecretKey::random())
     RUN_STANDALONE = false;
     MANUAL_CLOSE = false;
     CATCHUP_COMPLETE = false;
+    CATCHUP_RECENT = 0;
+    MAINTENANCE_ON_STARTUP = true;
     ARTIFICIALLY_GENERATE_LOAD_FOR_TESTING = false;
     ARTIFICIALLY_ACCELERATE_TIME_FOR_TESTING = false;
     ARTIFICIALLY_SET_CLOSE_TIME_FOR_TESTING = 0;
@@ -54,8 +56,8 @@ Config::Config() : NODE_SEED(SecretKey::random())
     PUBLIC_HTTP_PORT = false;
 
     PEER_PORT = DEFAULT_PEER_PORT;
-    TARGET_PEER_CONNECTIONS = 20;
-    MAX_PEER_CONNECTIONS = 50;
+    TARGET_PEER_CONNECTIONS = 8;
+    MAX_PEER_CONNECTIONS = 12;
     PREFERRED_PEERS_ONLY = false;
 
     MINIMUM_IDLE_PERCENT = 0;
@@ -269,6 +271,19 @@ Config::load(std::string const& filename)
                     throw std::invalid_argument("invalid CATCHUP_COMPLETE");
                 }
                 CATCHUP_COMPLETE = item.second->as<bool>()->value();
+            }
+            else if (item.first == "CATCHUP_RECENT")
+            {
+                if (!item.second->as<int64_t>())
+                {
+                    throw std::invalid_argument("invalid CATCHUP_RECENT");
+                }
+                int64_t r = item.second->as<int64_t>()->value();
+                if (r < 0 || r >= UINT32_MAX)
+                {
+                    throw std::invalid_argument("invalid CATCHUP_RECENT");
+                }
+                CATCHUP_RECENT = r;
             }
             else if (item.first == "ARTIFICIALLY_GENERATE_LOAD_FOR_TESTING")
             {
@@ -630,7 +645,8 @@ Config::validateConfig()
     }
 
     // calculates nodes that would break quorum
-    auto r = LocalNode::findClosestVBlocking(QUORUM_SET, nodes);
+    auto selfID = NODE_SEED.getPublicKey();
+    auto r = LocalNode::findClosestVBlocking(QUORUM_SET, nodes, nullptr);
 
     if (FAILURE_SAFETY == -1)
     {
@@ -639,9 +655,19 @@ Config::validateConfig()
         FAILURE_SAFETY = (static_cast<uint32>(nodes.size()) - 1) / 3;
     }
 
-    if (UNSAFE_QUORUM == false)
+    try
     {
-        try
+        if (FAILURE_SAFETY >= r.size())
+        {
+            LOG(ERROR) << "Not enough nodes / thresholds too strict in your "
+                          "Quorum set to ensure your desired level of "
+                          "FAILURE_SAFETY. Reduce FAILURE_SAFETY or fix "
+                          "quorum set";
+            throw std::invalid_argument(
+                "FAILURE_SAFETY incompatible with QUORUM_SET");
+        }
+
+        if (!UNSAFE_QUORUM)
         {
             if (FAILURE_SAFETY == 0)
             {
@@ -649,15 +675,6 @@ Config::validateConfig()
                     << "Can't have FAILURE_SAFETY=0 unless you also set "
                        "UNSAFE_QUORUM=true. Be sure you know what you are "
                        "doing!";
-                throw std::invalid_argument("SCP unsafe");
-            }
-
-            if (FAILURE_SAFETY >= r.size())
-            {
-                LOG(ERROR)
-                    << "Not enough nodes / thresholds too strict in your "
-                       "Quorum set to ensure your  desired level of "
-                       "FAILURE_SAFETY.";
                 throw std::invalid_argument("SCP unsafe");
             }
 
@@ -674,12 +691,12 @@ Config::validateConfig()
                 throw std::invalid_argument("SCP unsafe");
             }
         }
-        catch (...)
-        {
-            LOG(INFO) << " Current QUORUM_SET breaks with " << r.size()
-                      << " failures";
-            throw;
-        }
+    }
+    catch (...)
+    {
+        LOG(INFO) << " Current QUORUM_SET breaks with " << r.size()
+                  << " failures";
+        throw;
     }
 }
 
@@ -764,14 +781,27 @@ Config::toShortString(PublicKey const& pk) const
 }
 
 std::string
-Config::toStrKey(PublicKey const& pk) const
+Config::toStrKey(PublicKey const& pk, bool& isAlias) const
 {
     std::string ret = PubKeyUtils::toStrKey(pk);
     auto it = VALIDATOR_NAMES.find(ret);
     if (it == VALIDATOR_NAMES.end())
+    {
+        isAlias = false;
         return ret;
+    }
     else
+    {
+        isAlias = true;
         return it->second;
+    }
+}
+
+std::string
+Config::toStrKey(PublicKey const& pk) const
+{
+    bool isAlias;
+    return toStrKey(pk, isAlias);
 }
 
 bool

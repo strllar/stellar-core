@@ -115,7 +115,7 @@ NominationProtocol::isSane(SCPStatement const& st)
 
     res = res &&
           mSlot.getLocalNode()->isQuorumSetSane(
-              st.nodeID, *mSlot.getQuorumSetFromStatement(st));
+              *mSlot.getQuorumSetFromStatement(st), false);
 
     return res;
 }
@@ -442,7 +442,7 @@ NominationProtocol::nominate(Value const& value, Value const& previousValue,
                              bool timedout)
 {
     CLOG(DEBUG, "SCP") << "NominationProtocol::nominate "
-                       << mSlot.getValueString(value);
+                       << mSlot.getSCP().getValueString(value);
 
     bool updated = false;
 
@@ -523,42 +523,30 @@ NominationProtocol::stopNomination()
 void
 NominationProtocol::dumpInfo(Json::Value& ret)
 {
-    Json::Value nomState;
+    Json::Value& nomState = ret["nomination"];
     nomState["roundnumber"] = mRoundNumber;
     nomState["started"] = mNominationStarted;
 
     int counter = 0;
     for (auto const& v : mVotes)
     {
-        nomState["X"][counter] = mSlot.getValueString(v);
+        nomState["X"][counter] = mSlot.getSCP().getValueString(v);
         counter++;
     }
 
     counter = 0;
     for (auto const& v : mAccepted)
     {
-        nomState["Y"][counter] = mSlot.getValueString(v);
+        nomState["Y"][counter] = mSlot.getSCP().getValueString(v);
         counter++;
     }
 
     counter = 0;
     for (auto const& v : mCandidates)
     {
-        nomState["Z"][counter] = mSlot.getValueString(v);
+        nomState["Z"][counter] = mSlot.getSCP().getValueString(v);
         counter++;
     }
-
-    counter = 0;
-    for (auto const& v : mLatestNominations)
-    {
-        nomState["N"][counter]["id"] =
-            mSlot.getSCPDriver().toShortString(v.first);
-        nomState["N"][counter]["statement"] = mSlot.envToStr(v.second);
-
-        counter++;
-    }
-
-    ret["nomination"].append(nomState);
 }
 
 void

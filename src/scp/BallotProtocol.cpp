@@ -219,7 +219,7 @@ bool
 BallotProtocol::isStatementSane(SCPStatement const& st, bool self)
 {
     bool res = mSlot.getLocalNode()->isQuorumSetSane(
-        st.nodeID, *mSlot.getQuorumSetFromStatement(st));
+        *mSlot.getQuorumSetFromStatement(st), false);
     if (!res)
     {
         CLOG(DEBUG, "SCP") << "Invalid quorum set received";
@@ -352,7 +352,7 @@ BallotProtocol::bumpState(Value const& value, uint32 n)
 
     CLOG(DEBUG, "SCP") << "BallotProtocol::bumpState"
                        << " i: " << mSlot.getSlotIndex()
-                       << " v: " << mSlot.ballotToStr(newb);
+                       << " v: " << mSlot.getSCP().ballotToStr(newb);
 
     bool updated = updateCurrentValue(newb);
 
@@ -429,7 +429,7 @@ BallotProtocol::bumpToBallot(SCPBallot const& ballot, bool check)
 {
     CLOG(DEBUG, "SCP") << "BallotProtocol::bumpToBallot"
                        << " i: " << mSlot.getSlotIndex()
-                       << " b: " << mSlot.ballotToStr(ballot);
+                       << " b: " << mSlot.getSCP().ballotToStr(ballot);
 
     // `bumpToBallot` should be never called once we committed.
     dbgAssert(mPhase != SCP_PHASE_EXTERNALIZE);
@@ -835,7 +835,7 @@ BallotProtocol::setPreparedAccept(SCPBallot const& ballot)
 {
     CLOG(DEBUG, "SCP") << "BallotProtocol::setPreparedAccept"
                        << " i: " << mSlot.getSlotIndex()
-                       << " b: " << mSlot.ballotToStr(ballot);
+                       << " b: " << mSlot.getSCP().ballotToStr(ballot);
 
     // update our state
     bool didWork = setPrepared(ballot);
@@ -982,7 +982,7 @@ BallotProtocol::setPreparedConfirmed(SCPBallot const& newC,
 {
     CLOG(DEBUG, "SCP") << "BallotProtocol::setPreparedConfirmed"
                        << " i: " << mSlot.getSlotIndex()
-                       << " h: " << mSlot.ballotToStr(newH);
+                       << " h: " << mSlot.getSCP().ballotToStr(newH);
 
     bool didWork = false;
 
@@ -1231,8 +1231,8 @@ BallotProtocol::setAcceptCommit(SCPBallot const& c, SCPBallot const& h)
 {
     CLOG(DEBUG, "SCP") << "BallotProtocol::setAcceptCommit"
                        << " i: " << mSlot.getSlotIndex()
-                       << " new c: " << mSlot.ballotToStr(c)
-                       << " new h: " << mSlot.ballotToStr(h);
+                       << " new c: " << mSlot.getSCP().ballotToStr(c)
+                       << " new h: " << mSlot.getSCP().ballotToStr(h);
 
     bool didWork = false;
 
@@ -1252,6 +1252,7 @@ BallotProtocol::setAcceptCommit(SCPBallot const& c, SCPBallot const& h)
         {
             bumpToBallot(h, false);
         }
+        mPreparedPrime.reset();
 
         didWork = true;
     }
@@ -1411,11 +1412,6 @@ BallotProtocol::attemptConfirmCommit(SCPStatement const& hint)
 
     auto pred = [&ballot, this](Interval const& cur) -> bool
     {
-        // only look for (c,h) such that c <= h <= b
-        if (cur.second > mCurrentBallot->counter)
-        {
-            return false;
-        }
         return federatedRatify(
             std::bind(&BallotProtocol::commitPredicate, ballot, cur, _1));
     };
@@ -1437,8 +1433,8 @@ BallotProtocol::setConfirmCommit(SCPBallot const& c, SCPBallot const& h)
 {
     CLOG(DEBUG, "SCP") << "BallotProtocol::setConfirmCommit"
                        << " i: " << mSlot.getSlotIndex()
-                       << " new c: " << mSlot.ballotToStr(c)
-                       << " new h: " << mSlot.ballotToStr(h);
+                       << " new c: " << mSlot.getSCP().ballotToStr(c)
+                       << " new h: " << mSlot.getSCP().ballotToStr(h);
 
     mCommit = make_unique<SCPBallot>(c);
     mHighBallot = make_unique<SCPBallot>(h);
@@ -1730,6 +1726,36 @@ BallotProtocol::getCurrentState() const
     return res;
 }
 
+std::vector<SCPEnvelope>
+BallotProtocol::getExternalizingState() const
+{
+    std::vector<SCPEnvelope> res;
+    if (mPhase == SCP_PHASE_EXTERNALIZE)
+    {
+        res.reserve(mLatestEnvelopes.size());
+        for (auto const& n : mLatestEnvelopes)
+        {
+            if (!(n.first == mSlot.getSCP().getLocalNodeID()))
+            {
+                // good approximation: statements with the value that
+                // externalized
+                // we could filter more using mConfirmedPrepared as well
+                if (areBallotsCompatible(getWorkingBallot(n.second.statement),
+                                         *mCommit))
+                {
+                    res.emplace_back(n.second);
+                }
+            }
+            else if (mSlot.isFullyValidated())
+            {
+                // only return messages for self if the slot is fully validated
+                res.emplace_back(n.second);
+            }
+        }
+    }
+    return res;
+}
+
 void
 BallotProtocol::advanceSlot(SCPStatement const& hint)
 {
@@ -1879,30 +1905,35 @@ const char* BallotProtocol::phaseNames[SCP_PHASE_NUM] = {"PREPARE", "FINISH",
 void
 BallotProtocol::dumpInfo(Json::Value& ret)
 {
-    Json::Value state;
+    Json::Value& state = ret["ballotProtocol"];
     state["heard"] = mHeardFromQuorum;
-    state["ballot"] = mSlot.ballotToStr(mCurrentBallot);
+    state["ballot"] = mSlot.getSCP().ballotToStr(mCurrentBallot);
     state["phase"] = phaseNames[mPhase];
 
     state["state"] = getLocalState();
-
-    ret["ballotProtocol"].append(state);
 }
 
 void
 BallotProtocol::dumpQuorumInfo(Json::Value& ret, NodeID const& id, bool summary)
 {
     auto& phase = ret["phase"];
+
     // find the state of the node `id`
+    SCPBallot b;
+    Hash qSetHash;
+
     auto stateit = mLatestEnvelopes.find(id);
     if (stateit == mLatestEnvelopes.end())
     {
         phase = "unknown";
+        if (id == mSlot.getLocalNode()->getNodeID())
+        {
+            qSetHash = mSlot.getLocalNode()->getQuorumSetHash();
+        }
     }
     else
     {
         auto const& st = stateit->second.statement;
-        SCPBallot b;
 
         switch (st.pledges.type())
         {
@@ -1921,74 +1952,76 @@ BallotProtocol::dumpQuorumInfo(Json::Value& ret, NodeID const& id, bool summary)
         default:
             dbgAbort();
         }
-
-        Json::Value& disagree = ret["disagree"];
-        Json::Value& missing = ret["missing"];
-
-        int n_missing = 0, n_disagree = 0;
-
-        int agree = 0;
         // use the companion set here even for externalize to capture
         // the view of the quorum set during consensus
-        Hash qSetHash = mSlot.getCompanionQuorumSetHashFromStatement(st);
-        auto qSet = mSlot.getSCPDriver().getQSet(qSetHash);
-        if (!qSet)
-        {
-            phase = "expired";
-            return;
-        }
-        LocalNode::forAllNodes(
-            *qSet, [&](NodeID const& n)
-            {
-                auto it = mLatestEnvelopes.find(n);
-                if (it == mLatestEnvelopes.end())
-                {
-                    if (!summary)
-                    {
-                        missing.append(mSlot.getSCPDriver().toShortString(n));
-                    }
-                    n_missing++;
-                }
-                else if (areBallotsCompatible(
-                             getWorkingBallot(it->second.statement), b))
-                {
-                    agree++;
-                }
-                else
-                {
-                    if (!summary)
-                    {
-                        disagree.append(mSlot.getSCPDriver().toShortString(n));
-                    }
-                    n_disagree++;
-                }
-            });
-        if (summary)
-        {
-            missing = n_missing;
-            disagree = n_disagree;
-        }
-
-        auto f = LocalNode::findClosestVBlocking(
-            *qSet, mLatestEnvelopes, [&](SCPStatement const& st)
-            {
-                return areBallotsCompatible(getWorkingBallot(st), b);
-            });
-        ret["fail_at"] = static_cast<int>(f.size());
-
-        if (!summary)
-        {
-            auto& f_ex = ret["fail_with"];
-            for (auto const& n : f)
-            {
-                f_ex.append(mSlot.getSCPDriver().toShortString(n));
-            }
-            getLocalNode()->toJson(*qSet, ret["value"]);
-        }
-
-        ret["hash"] = hexAbbrev(qSetHash);
-        ret["agree"] = agree;
+        qSetHash = mSlot.getCompanionQuorumSetHashFromStatement(st);
     }
+
+    Json::Value& disagree = ret["disagree"];
+    Json::Value& missing = ret["missing"];
+
+    int n_missing = 0, n_disagree = 0;
+
+    int agree = 0;
+    auto qSet = mSlot.getSCPDriver().getQSet(qSetHash);
+    if (!qSet)
+    {
+        phase = "expired";
+        return;
+    }
+    LocalNode::forAllNodes(
+        *qSet, [&](NodeID const& n)
+        {
+            auto it = mLatestEnvelopes.find(n);
+            if (it == mLatestEnvelopes.end())
+            {
+                if (!summary)
+                {
+                    missing.append(mSlot.getSCPDriver().toShortString(n));
+                }
+                n_missing++;
+            }
+            else if (areBallotsCompatible(
+                         getWorkingBallot(it->second.statement), b))
+            {
+                agree++;
+            }
+            else
+            {
+                if (!summary)
+                {
+                    disagree.append(mSlot.getSCPDriver().toShortString(n));
+                }
+                n_disagree++;
+            }
+        });
+    if (summary)
+    {
+        missing = n_missing;
+        disagree = n_disagree;
+    }
+
+    auto f = LocalNode::findClosestVBlocking(*qSet, mLatestEnvelopes,
+                                             [&](SCPStatement const& st)
+                                             {
+                                                 return areBallotsCompatible(
+                                                     getWorkingBallot(st), b);
+                                             },
+                                             &id);
+    ret["fail_at"] = static_cast<int>(f.size());
+
+    if (!summary)
+    {
+        auto& f_ex = ret["fail_with"];
+        for (auto const& n : f)
+        {
+            f_ex.append(mSlot.getSCPDriver().toShortString(n));
+        }
+        getLocalNode()->toJson(*qSet, ret["value"]);
+    }
+
+    ret["hash"] = hexAbbrev(qSetHash);
+    ret["agree"] = agree;
 }
 
 std::string
@@ -1997,11 +2030,11 @@ BallotProtocol::getLocalState() const
     std::ostringstream oss;
 
     oss << "i: " << mSlot.getSlotIndex() << " | " << phaseNames[mPhase]
-        << " | b: " << mSlot.ballotToStr(mCurrentBallot)
-        << " | p: " << mSlot.ballotToStr(mPrepared)
-        << " | p': " << mSlot.ballotToStr(mPreparedPrime)
-        << " | h: " << mSlot.ballotToStr(mHighBallot)
-        << " | c: " << mSlot.ballotToStr(mCommit)
+        << " | b: " << mSlot.getSCP().ballotToStr(mCurrentBallot)
+        << " | p: " << mSlot.getSCP().ballotToStr(mPrepared)
+        << " | p': " << mSlot.getSCP().ballotToStr(mPreparedPrime)
+        << " | h: " << mSlot.getSCP().ballotToStr(mHighBallot)
+        << " | c: " << mSlot.getSCP().ballotToStr(mCommit)
         << " | M: " << mLatestEnvelopes.size();
     return oss.str();
 }

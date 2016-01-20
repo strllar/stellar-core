@@ -17,6 +17,9 @@ namespace stellar
 {
 class Application;
 class Peer;
+class Database;
+class XDROutputFileStream;
+
 typedef std::shared_ptr<Peer> PeerPtr;
 
 /*
@@ -107,9 +110,10 @@ class Herder
 
     virtual void triggerNextLedger(uint32_t ledgerSeqToTrigger) = 0;
 
-    // returns if a nodeID's quorum set passes sanity checks
-    virtual bool isQuorumSetSane(NodeID const& nodeID,
-                                 SCPQuorumSet const& qSet) = 0;
+    // returns if the quorum set passes basic sanity checks
+    // if extraChecks is set, performs additional checks
+    virtual bool isQuorumSetSane(SCPQuorumSet const& qSet,
+                                 bool extraChecks) = 0;
 
     // lookup a nodeID in config and in SCP messages
     virtual bool resolveNodeID(std::string const& s, PublicKey& retKey) = 0;
@@ -121,5 +125,12 @@ class Herder
     virtual void dumpInfo(Json::Value& ret, size_t limit) = 0;
     virtual void dumpQuorumInfo(Json::Value& ret, NodeID const& id,
                                 bool summary, uint64 index = 0) = 0;
+
+    static size_t copySCPHistoryToStream(Database& db, soci::session& sess,
+                                         uint32_t ledgerSeq,
+                                         uint32_t ledgerCount,
+                                         XDROutputFileStream& scpHistory);
+    static void dropAll(Database& db);
+    static void deleteOldEntries(Database& db, uint32_t ledgerSeq);
 };
 }

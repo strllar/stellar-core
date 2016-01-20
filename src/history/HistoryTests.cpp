@@ -5,6 +5,7 @@
 #include "main/Application.h"
 #include "history/HistoryManager.h"
 #include "history/HistoryArchive.h"
+#include "history/HistoryWork.h"
 #include "main/test.h"
 #include "main/ExternalQueue.h"
 #include "main/Config.h"
@@ -22,6 +23,8 @@
 #include "process/ProcessManager.h"
 #include "util/NonCopyable.h"
 #include "herder/LedgerCloseData.h"
+#include "work/WorkManager.h"
+#include "work/WorkParent.h"
 #include <cstdio>
 #include <xdrpp/autocheck.h>
 #include <fstream>
@@ -122,7 +125,7 @@ class HistoryTests
         CHECK(HistoryManager::initializeHistoryArchive(app, "test"));
     }
 
-    void crankTillDone(bool& done);
+    void crankTillDone();
     void generateRandomLedger();
     void generateAndPublishHistory(size_t nPublishes);
     void generateAndPublishInitialHistory(size_t nPublishes);
@@ -130,12 +133,12 @@ class HistoryTests
     Application::pointer
     catchupNewApplication(uint32_t initLedger, Config::TestDbMode dbMode,
                           HistoryManager::CatchupMode resumeMode,
-                          std::string const& appName);
+                          std::string const& appName, uint32_t recent = 80);
 
     bool catchupApplication(uint32_t initLedger,
                             HistoryManager::CatchupMode resumeMode,
                             Application::pointer app2, bool doStart = true,
-                            uint32_t maxCranks = 0xffffffff);
+                            uint32_t gap = 0);
 
     bool
     flip()
@@ -145,9 +148,10 @@ class HistoryTests
 };
 
 void
-HistoryTests::crankTillDone(bool& done)
+HistoryTests::crankTillDone()
 {
-    while (!done && !app.getClock().getIOService().stopped())
+    while (!app.getWorkManager().allChildrenDone() &&
+           !app.getClock().getIOService().stopped())
     {
         app.getClock().crank(true);
     }
@@ -194,69 +198,47 @@ TEST_CASE_METHOD(HistoryTests, "HistoryManager::compress", "[history]")
         std::ofstream out(fname, std::ofstream::binary);
         out.write(s.data(), s.size());
     }
-    bool done = false;
-    hm.compress(fname, [&done, &fname, &hm](asio::error_code const& ec)
-                {
-                    std::string compressed = fname + ".gz";
-                    CHECK(!fs::exists(fname));
-                    CHECK(fs::exists(compressed));
-                    hm.decompress(compressed, [&done, &fname, compressed](
-                                                  asio::error_code const& ec)
-                                  {
-                                      CHECK(fs::exists(fname));
-                                      CHECK(!fs::exists(compressed));
-                                      done = true;
-                                  });
-                });
-    crankTillDone(done);
-}
+    std::string compressed = fname + ".gz";
+    auto& wm = app.getWorkManager();
+    auto g = wm.addWork<GzipFileWork>(fname);
+    wm.advanceChildren();
+    crankTillDone();
+    REQUIRE(g->getState() == Work::WORK_SUCCESS);
+    REQUIRE(!fs::exists(fname));
+    REQUIRE(fs::exists(compressed));
 
-TEST_CASE_METHOD(HistoryTests, "HistoryManager::verifyHash", "[history]")
-{
-    std::string s = "hello there";
-    HistoryManager& hm = app.getHistoryManager();
-    std::string fname = hm.localFilename("hashme");
-    {
-        std::ofstream out(fname, std::ofstream::binary);
-        out.write(s.data(), s.size());
-    }
-    bool done = false;
-    uint256 hash = hexToBin256(
-        "12998c017066eb0d2a70b94e6ed3192985855ce390f321bbdb832022888bd251");
-    hm.verifyHash(fname, hash, [&done](asio::error_code const& ec)
-                  {
-                      CHECK(!ec);
-                      done = true;
-                  });
-    crankTillDone(done);
+    auto u = wm.addWork<GunzipFileWork>(compressed);
+    wm.advanceChildren();
+    crankTillDone();
+    REQUIRE(u->getState() == Work::WORK_SUCCESS);
+    REQUIRE(fs::exists(fname));
+    REQUIRE(!fs::exists(compressed));
 }
 
 TEST_CASE_METHOD(HistoryTests, "HistoryArchiveState::get_put", "[history]")
 {
     HistoryArchiveState has;
     has.currentLedger = 0x1234;
-    bool done = false;
 
     auto i = app.getConfig().HISTORY.find("test");
-    CHECK(i != app.getConfig().HISTORY.end());
+    REQUIRE(i != app.getConfig().HISTORY.end());
     auto archive = i->second;
 
-    auto& theApp = this->app; // need a local scope reference
     has.resolveAllFutures();
-    archive->putState(app, has,
-                      [&done, &theApp, archive](asio::error_code const& ec)
-                      {
-                          CHECK(!ec);
-                          archive->getMostRecentState(
-                              theApp, [&done](asio::error_code const& ec,
-                                              HistoryArchiveState const& has2)
-                              {
-                                  CHECK(!ec);
-                                  CHECK(has2.currentLedger == 0x1234);
-                                  done = true;
-                              });
-                      });
-    crankTillDone(done);
+
+    auto& wm = app.getWorkManager();
+    auto put = wm.addWork<PutHistoryArchiveStateWork>(has, archive);
+    wm.advanceChildren();
+    crankTillDone();
+    REQUIRE(put->getState() == Work::WORK_SUCCESS);
+
+    HistoryArchiveState has2;
+    auto get = wm.addWork<GetHistoryArchiveStateWork>(
+        has2, 0, std::chrono::seconds(0), archive);
+    wm.advanceChildren();
+    crankTillDone();
+    REQUIRE(get->getState() == Work::WORK_SUCCESS);
+    REQUIRE(has2.currentLedger == 0x1234);
 }
 
 extern LedgerEntry generateValidLedgerEntry();
@@ -393,7 +375,8 @@ Application::pointer
 HistoryTests::catchupNewApplication(uint32_t initLedger,
                                     Config::TestDbMode dbMode,
                                     HistoryManager::CatchupMode resumeMode,
-                                    std::string const& appName)
+                                    std::string const& appName,
+                                    uint32_t recent)
 {
 
     CLOG(INFO, "History") << "****";
@@ -403,6 +386,10 @@ HistoryTests::catchupNewApplication(uint32_t initLedger,
 
     mCfgs.emplace_back(
         getTestConfig(static_cast<int>(mCfgs.size()) + 1, dbMode));
+    if (resumeMode == HistoryManager::CATCHUP_RECENT)
+    {
+        mCfgs.back().CATCHUP_RECENT = recent;
+    }
     Application::pointer app2 = Application::create(
         clock, mConfigurator->configure(mCfgs.back(), false));
 
@@ -415,7 +402,7 @@ bool
 HistoryTests::catchupApplication(uint32_t initLedger,
                                  HistoryManager::CatchupMode resumeMode,
                                  Application::pointer app2, bool doStart,
-                                 uint32_t maxCranks)
+                                 uint32_t gap)
 {
 
     auto& lm = app2->getLedgerManager();
@@ -460,30 +447,37 @@ HistoryTests::catchupApplication(uint32_t initLedger,
         app.getHistoryManager().nextCheckpointLedger(initLedger);
     for (uint32_t n = initLedger; n <= nextBlockStart; ++n)
     {
+        // Remember the vectors count from 2, not 0.
         if (n - 2 >= mLedgerCloseDatas.size())
         {
             break;
         }
-        // Remember the vectors count from 2, not 0.
-        auto const& lcd = mLedgerCloseDatas.at(n - 2);
-        CLOG(INFO, "History")
-            << "force-externalizing LedgerCloseData for " << n
-            << " has txhash:" << hexAbbrev(lcd.mTxSet->getContentsHash());
-        lm.externalizeValue(lcd);
+        if (n == gap)
+        {
+            CLOG(INFO, "History")
+                << "simulating LedgerClose transmit gap at ledger " << n;
+        }
+        else
+        {
+            // Remember the vectors count from 2, not 0.
+            auto const& lcd = mLedgerCloseDatas.at(n - 2);
+            CLOG(INFO, "History")
+                << "force-externalizing LedgerCloseData for " << n
+                << " has txhash:" << hexAbbrev(lcd.mTxSet->getContentsHash());
+            lm.externalizeValue(lcd);
+        }
     }
 
     uint32_t lastLedger = lm.getLastClosedLedgerNum();
 
     assert(!app2->getClock().getIOService().stopped());
 
-    while ((app2->getLedgerManager().getState() !=
-            LedgerManager::LM_SYNCED_STATE) &&
-           !app2->getClock().getIOService().stopped() && (--maxCranks != 0))
+    while (!app2->getWorkManager().allChildrenDone())
     {
-        app2->getClock().crank(true);
+        app2->getClock().crank(false);
     }
 
-    if (maxCranks == 0)
+    if (app2->getLedgerManager().getState() != LedgerManager::LM_SYNCED_STATE)
     {
         return false;
     }
@@ -612,6 +606,8 @@ resumeModeName(HistoryManager::CatchupMode mode)
         return "CATCHUP_MINIMAL";
     case HistoryManager::CATCHUP_COMPLETE:
         return "CATCHUP_COMPLETE";
+    case HistoryManager::CATCHUP_RECENT:
+        return "CATCHUP_RECENT";
     default:
         abort();
     }
@@ -645,7 +641,9 @@ TEST_CASE_METHOD(HistoryTests, "Full history catchup",
     std::vector<Application::pointer> apps;
 
     std::vector<HistoryManager::CatchupMode> resumeModes = {
-        HistoryManager::CATCHUP_MINIMAL, HistoryManager::CATCHUP_COMPLETE};
+        HistoryManager::CATCHUP_MINIMAL, HistoryManager::CATCHUP_COMPLETE,
+        HistoryManager::CATCHUP_RECENT,
+    };
 
     std::vector<Config::TestDbMode> dbModes = {Config::TESTDB_IN_MEMORY_SQLITE,
                                                Config::TESTDB_ON_DISK_SQLITE};
@@ -673,7 +671,7 @@ TEST_CASE_METHOD(HistoryTests, "History publish queueing",
 
     auto& hm = app.getHistoryManager();
 
-    while (hm.getPublishDelayCount() < 2)
+    while (hm.getPublishQueueCount() < 4)
     {
         generateRandomLedger();
     }
@@ -685,10 +683,6 @@ TEST_CASE_METHOD(HistoryTests, "History publish queueing",
         CHECK(hm.getPublishFailureCount() == 0);
         app.getClock().crank(true);
     }
-
-    // We should have 1 inital publish, 1 subsequent publish, and
-    // 2 delayed publishes, making 4 total.
-    CHECK(hm.getPublishSuccessCount() == 4);
 
     auto initLedger = app.getLedgerManager().getLastClosedLedgerNum();
     auto app2 =
@@ -781,10 +775,10 @@ TEST_CASE_METHOD(HistoryTests, "Publish/catchup alternation, with stall",
     initLedger = lm.getLastClosedLedgerNum();
 
     caughtup = catchupApplication(initLedger, HistoryManager::CATCHUP_COMPLETE,
-                                  app2, true, 30);
+                                  app2, true);
     CHECK(!caughtup);
     caughtup = catchupApplication(initLedger, HistoryManager::CATCHUP_MINIMAL,
-                                  app3, true, 30);
+                                  app3, true);
     CHECK(!caughtup);
 
     // Now complete this publish cycle and confirm that the stalled apps
@@ -929,11 +923,113 @@ TEST_CASE("persist publish queue", "[history]")
         LOG(INFO) << "minLedger " << minLedger;
         bool okQueue = minLedger == 0 || minLedger >= 35;
         CHECK(okQueue);
+        clock.cancelAllEvents();
         while (clock.cancelAllEvents() ||
                app1->getProcessManager().getNumRunningProcesses() > 0)
         {
             clock.crank(true);
         }
         LOG(INFO) << app1->isStopping();
+    }
+}
+
+// The idea with this test is that we join a network and somehow get a gap
+// in the SCP voting sequence while we're trying to catchup.  This should
+// cause catchup to fail, but that failure should itself just flush the
+// ledgermanager's buffer and get kicked back into catchup mode when the
+// network moves further ahead.
+//
+// (Both the hard-failure and the clear/reset weren't working when this
+// test was written)
+
+TEST_CASE_METHOD(HistoryTests, "too far behind / catchup restart",
+                 "[history][catchupstall]")
+{
+    generateAndPublishInitialHistory(1);
+
+    // Catch up successfully the first time
+    auto app2 = catchupNewApplication(
+        app.getLedgerManager().getCurrentLedgerHeader().ledgerSeq,
+        Config::TESTDB_IN_MEMORY_SQLITE, HistoryManager::CATCHUP_COMPLETE,
+        "app2");
+
+    // Now generate a little more history
+    generateAndPublishHistory(1);
+
+    bool caughtup = false;
+    auto init = app2->getLedgerManager().getLastClosedLedgerNum() + 2;
+
+    // Now start a catchup on that _fails_ due to a gap
+    LOG(INFO) << "Starting BROKEN catchup (with gap) from " << init;
+    caughtup = catchupApplication(init, HistoryManager::CATCHUP_COMPLETE, app2,
+                                  true, init + 10);
+
+    assert(!caughtup);
+
+    app2->getWorkManager().clearChildren();
+
+    // Now generate a little more history
+    generateAndPublishHistory(1);
+
+    // And catchup successfully
+    init = app.getLedgerManager().getLastClosedLedgerNum();
+    caughtup = catchupApplication(init, HistoryManager::CATCHUP_COMPLETE, app2);
+    assert(caughtup);
+}
+
+/*
+ * Test a variety of orderings of CATCHUP_RECENT mode, to shake out boundary
+ * cases.
+ */
+TEST_CASE_METHOD(HistoryTests, "Catchup recent",
+                 "[history][catchuprecent]")
+{
+    auto dbMode = Config::TESTDB_IN_MEMORY_SQLITE;
+    auto catchupMode = HistoryManager::CATCHUP_RECENT;
+    std::vector<Application::pointer> apps;
+
+    generateAndPublishInitialHistory(3);
+
+    // Network has published 0x3f (63), 0x7f (127) and 0xbf (191)
+    // Network is currently sitting on ledger 0xc0 (192)
+    uint32_t initLedger = app.getLedgerManager().getLastClosedLedgerNum();
+
+    // Check that isolated catchups work at a variety of boundary
+    // conditions relative to the size of a checkpoint:
+    std::vector<uint32_t> recents =
+        {
+            0, 1, 2,
+            31, 32, 33,
+            62, 63, 64, 65, 66,
+            126, 127, 128, 129, 130,
+            190, 191, 192, 193, 194,
+            1000
+        };
+
+    for (auto r : recents)
+    {
+        auto name = std::string("catchup-recent-") + std::to_string(r);
+        apps.push_back(catchupNewApplication(initLedger, dbMode,
+                                             catchupMode, name, r));
+    }
+
+    // Now push network along a little bit and see that they can all still
+    // catch up properly.
+    generateAndPublishHistory(2);
+    initLedger = app.getLedgerManager().getLastClosedLedgerNum();
+
+    for (auto a : apps)
+    {
+        catchupApplication(initLedger, HistoryManager::CATCHUP_RECENT, a);
+    }
+
+    // Now push network along a _lot_ futher along see that they can all still
+    // catch up properly.
+    generateAndPublishHistory(25);
+    initLedger = app.getLedgerManager().getLastClosedLedgerNum();
+
+    for (auto a : apps)
+    {
+        catchupApplication(initLedger, HistoryManager::CATCHUP_RECENT, a);
     }
 }

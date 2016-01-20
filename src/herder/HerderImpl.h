@@ -117,8 +117,7 @@ class HerderImpl : public Herder, public SCPDriver
 
     void triggerNextLedger(uint32_t ledgerSeqToTrigger) override;
 
-    bool isQuorumSetSane(NodeID const& nodeID,
-                         SCPQuorumSet const& qSet) override;
+    bool isQuorumSetSane(SCPQuorumSet const& qSet, bool extraChecks) override;
 
     bool resolveNodeID(std::string const& s, PublicKey& retKey) override;
 
@@ -140,6 +139,8 @@ class HerderImpl : public Herder, public SCPDriver
     void logQuorumInformation(uint64 index);
     void ledgerClosed();
     void removeReceivedTxs(std::vector<TransactionFramePtr> const& txs);
+
+    void saveSCPHistory(uint64 index);
 
     // returns true if upgrade is a valid upgrade step
     // in which case it also sets upgradeType

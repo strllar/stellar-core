@@ -18,10 +18,12 @@
 #include "database/Database.h"
 #include "process/ProcessManager.h"
 #include "main/CommandHandler.h"
+#include "work/WorkManager.h"
 #include "simulation/LoadGenerator.h"
 #include "crypto/SecretKey.h"
 #include "crypto/SHA.h"
 #include "scp/LocalNode.h"
+#include "main/ExternalQueue.h"
 #include "medida/metrics_registry.h"
 #include "medida/reporting/console_reporter.h"
 #include "medida/meter.h"
@@ -91,6 +93,7 @@ ApplicationImpl::ApplicationImpl(VirtualClock& clock, Config const& cfg)
     mHistoryManager = HistoryManager::create(*this);
     mProcessManager = ProcessManager::create(*this);
     mCommandHandler = make_unique<CommandHandler>(*this);
+    mWorkManager = WorkManager::create(*this);
 
     while (t--)
     {
@@ -223,12 +226,20 @@ ApplicationImpl::start()
     {
         throw std::invalid_argument("Quorum not configured");
     }
-    if (!mHerder->isQuorumSetSane(mConfig.NODE_SEED.getPublicKey(),
-                                  mConfig.QUORUM_SET))
+    if (!mHerder->isQuorumSetSane(mConfig.QUORUM_SET, !mConfig.UNSAFE_QUORUM))
     {
-        throw std::invalid_argument(
-            "Invalid QUORUM_SET: bad threshold, "
-            "duplicate entry or self is not a member (validator)");
+        std::string err("Invalid QUORUM_SET: duplicate entry or bad threshold "
+                        "(should be between ");
+        if (mConfig.UNSAFE_QUORUM)
+        {
+            err = err + "1";
+        }
+        else
+        {
+            err = err + "51";
+        }
+        err = err + " and 100)";
+        throw std::invalid_argument(err);
     }
 
     bool done = false;
@@ -237,11 +248,14 @@ ApplicationImpl::start()
         {
             // restores the SCP state before starting overlay
             mHerder->restoreSCPState();
+            // perform maintenance tasks if configured to do so
+            // for now, we only perform it when CATCHUP_COMPLETE is not set
+            if (mConfig.MAINTENANCE_ON_STARTUP && !mConfig.CATCHUP_COMPLETE)
+            {
+                maintenance();
+            }
             mOverlayManager->start();
-            auto npub = mHistoryManager->publishQueuedHistory(
-                [](asio::error_code const&)
-                {
-                });
+            auto npub = mHistoryManager->publishQueuedHistory();
             if (npub != 0)
             {
                 CLOG(INFO, "Ledger") << "Restarted publishing " << npub
@@ -365,6 +379,14 @@ ApplicationImpl::checkDB()
                                   this->getDatabase(),
                                   this->getBucketManager().getBucketList());
         });
+}
+
+void
+ApplicationImpl::maintenance()
+{
+    LOG(INFO) << "Performing maintenance";
+    ExternalQueue ps(*this);
+    ps.process();
 }
 
 void
@@ -545,6 +567,12 @@ CommandHandler&
 ApplicationImpl::getCommandHandler()
 {
     return *mCommandHandler;
+}
+
+WorkManager&
+ApplicationImpl::getWorkManager()
+{
+    return *mWorkManager;
 }
 
 asio::io_service&
