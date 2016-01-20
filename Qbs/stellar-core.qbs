@@ -123,6 +123,7 @@ Project {
                 "/simulation/*.cpp",
                 "/transactions/*.cpp",
                 "/process/*.cpp",
+                "/work/*.cpp",
                 "/util/*.cpp",
             ]
         }
