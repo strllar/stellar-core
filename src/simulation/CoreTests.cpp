@@ -12,8 +12,21 @@
 #include "main/test.h"
 #include "util/Logging.h"
 #include "util/types.h"
+#include "util/Math.h"
 #include "herder/Herder.h"
 #include "transactions/TransactionFrame.h"
+#include "lib/util/format.h"
+#include "medida/stats/snapshot.h"
+#include "bucket/Bucket.h"
+#include "bucket/BucketList.h"
+#include "bucket/BucketManager.h"
+#include "bucket/LedgerCmp.h"
+#include "bucket/BucketManagerImpl.h"
+#include "ledger/LedgerManager.h"
+#include "herder/LedgerCloseData.h"
+#include "ledger/LedgerTestUtils.h"
+#include "xdrpp/autocheck.h"
+#include <sstream>
 
 using namespace stellar;
 
@@ -291,7 +304,8 @@ TEST_CASE("Stress test on 2 nodes 3 accounts 10 random transactions 10tx/sec",
     LOG(INFO) << simulation->metricsSummary("database");
 }
 
-TEST_CASE("Auto-calibrated single node load test", "[autoload][hide]")
+Application::pointer
+newLoadTestApp(VirtualClock& clock)
 {
     Config cfg =
 #ifdef USE_POSTGRES
@@ -301,14 +315,19 @@ TEST_CASE("Auto-calibrated single node load test", "[autoload][hide]")
     cfg.RUN_STANDALONE = false;
     cfg.PARANOID_MODE = false;
     cfg.DESIRED_MAX_TX_PER_LEDGER = 10000;
-    VirtualClock clock(VirtualClock::REAL_TIME);
     Application::pointer appPtr = Application::create(clock, cfg);
     appPtr->start();
     // force maxTxSetSize to avoid throwing txSets on the floor during the first
     // ledger close
     appPtr->getLedgerManager().getCurrentLedgerHeader().maxTxSetSize =
         cfg.DESIRED_MAX_TX_PER_LEDGER;
+    return appPtr;
+}
 
+TEST_CASE("Auto-calibrated single node load test", "[autoload][hide]")
+{
+    VirtualClock clock(VirtualClock::REAL_TIME);
+    auto appPtr = newLoadTestApp(clock);
     appPtr->generateLoad(100000, 100000, 10, true);
     auto& io = clock.getIOService();
     asio::io_service::work mainWork(io);
@@ -317,5 +336,320 @@ TEST_CASE("Auto-calibrated single node load test", "[autoload][hide]")
     while (!io.stopped() && complete.count() == 0)
     {
         clock.crank();
+    }
+}
+
+class ScaleReporter
+{
+    std::vector<std::string> mColumns;
+    std::string mFilename;
+    std::ofstream mOut;
+    size_t mNumWritten{0};
+    static std::string join(std::vector<std::string> const& parts,
+                            std::string const& sep)
+    {
+        std::string sum;
+        bool first = true;
+        for (auto const& s : parts)
+        {
+            if (first)
+            {
+                first = false;
+            }
+            else
+            {
+                sum += sep;
+            }
+            sum += s;
+        }
+        return sum;
+    }
+
+public:
+    ScaleReporter(std::vector<std::string> const& columns)
+        : mColumns(columns),
+          mFilename(fmt::format("{:s}-{:d}.csv", join(columns, "-vs-"),
+                                std::time(nullptr))),
+          mOut(mFilename)
+    {
+        LOG(INFO) << "Opened " << mFilename << " for writing";
+        mOut << join(columns, ",") << std::endl;
+    }
+
+    ~ScaleReporter()
+    {
+        LOG(INFO) << "Wrote " << mNumWritten << " rows to " << mFilename;
+    }
+
+    void write(std::vector<double> const& vals) {
+        assert(vals.size() == mColumns.size());
+        std::ostringstream oss;
+        for (size_t i = 0; i < vals.size(); ++i)
+        {
+            if (i != 0)
+            {
+                oss << ", ";
+                mOut << ",";
+            }
+            oss << mColumns.at(i) << "=" << std::fixed << vals.at(i);
+            mOut << std::fixed << vals.at(i);
+        }
+        LOG(INFO) << std::fixed << "Writing " << oss.str();
+        mOut << std::endl;
+        ++mNumWritten;
+    }
+};
+
+static void
+closeLedger(Application& app)
+{
+    auto& clock = app.getClock();
+    bool advanced = false;
+    VirtualTimer t(clock);
+    auto nsecs = std::chrono::seconds(Herder::EXP_LEDGER_TIMESPAN_SECONDS);
+    if (app.getConfig().ARTIFICIALLY_ACCELERATE_TIME_FOR_TESTING)
+    {
+        nsecs = std::chrono::seconds(1);
+    }
+    t.expires_from_now(nsecs);
+    t.async_wait([&](asio::error_code ec){ advanced = true; });
+
+    auto& io = clock.getIOService();
+    asio::io_service::work mainWork(io);
+    auto &lm = app.getLedgerManager();
+    auto start = lm.getLastClosedLedgerNum();
+    while ((!io.stopped() &&
+            lm.getLastClosedLedgerNum() == start) ||
+           !advanced)
+    {
+        clock.crank();
+    }
+}
+
+static void
+generateAccountsAndCloseLedger(Application& app, int num)
+{
+    auto& lg = app.getLoadGenerator();
+    std::vector<LoadGenerator::TxInfo> txs;
+    uint32_t ledgerNum = app.getLedgerManager().getLedgerNum();
+    int tries = num * 100;
+    while (tries-- > 0 && txs.size() < (size_t)num) {
+        lg.maybeCreateAccount(ledgerNum, txs);
+    }
+    LOG(INFO) << "Creating " << num << " accounts via txs...";
+    for (auto& tx : txs)
+    {
+        tx.execute(app);
+    }
+    closeLedger(app);
+}
+
+static void
+generateTxsAndCloseLedger(Application& app, int num)
+{
+    auto& lg = app.getLoadGenerator();
+    std::vector<LoadGenerator::TxInfo> txs;
+    uint32_t ledgerNum = app.getLedgerManager().getLedgerNum();
+    int tries = num * 100;
+    while (tries-- > 0 && txs.size() < (size_t)num) {
+        txs.push_back(lg.createRandomTransaction(0.5, ledgerNum));
+    }
+    LOG(INFO) << "Applying " << txs.size() << " transactions...";
+    for (auto& tx : txs)
+    {
+        tx.execute(app);
+    }
+    closeLedger(app);
+}
+
+TEST_CASE("Accounts vs. latency", "[scalability][hide]")
+{
+    ScaleReporter r({"accounts", "txcount",
+                "latencymin", "latencymax", "latency50", "latency95", "latency99"});
+
+    VirtualClock clock;
+    auto appPtr = newLoadTestApp(clock);
+    auto& app = *appPtr;
+
+    auto& lg = app.getLoadGenerator();
+    auto& txtime = app.getMetrics().NewTimer({"transaction", "op", "apply"});
+
+    size_t step = 5000;
+    size_t total = 10000000;
+
+    closeLedger(app);
+    closeLedger(app);
+
+    while (!app.getClock().getIOService().stopped() && lg.mAccounts.size() < total)
+    {
+        LOG(INFO) << "Creating " << (step*10)
+                  << " bulking accounts and " << (step/10) << " interesting accounts ("
+                  << 100 * (((double)lg.mAccounts.size()) / ((double)total))
+                  << "%)";
+
+        auto curr = lg.mAccounts.size();
+
+        // First, create 10*step "bulking" accounts
+        auto accounts = lg.createAccounts(step * 10);
+        for (auto& acc : accounts)
+        {
+            acc->createDirectly(app);
+        }
+
+        // Then create step/10 "interesting" accounts via txs that set up
+        // trustlines and offers and such
+        generateAccountsAndCloseLedger(app, step/10);
+
+        // Reload everything we just added.
+        while (curr < lg.mAccounts.size())
+        {
+            lg.loadAccount(app, lg.mAccounts.at(curr++));
+        }
+
+        txtime.Clear();
+
+        // Then generate some non-account-creating (payment) txs in
+        // a subsequent ledger.
+        generateTxsAndCloseLedger(app, step/10);
+
+        app.reportCfgMetrics();
+        r.write({(double)lg.mAccounts.size(),
+                    (double)txtime.count(),
+                    txtime.min(),
+                    txtime.max(),
+                    txtime.GetSnapshot().getMedian(),
+                    txtime.GetSnapshot().get95thPercentile(),
+                    txtime.GetSnapshot().get99thPercentile()
+                    });
+    }
+}
+
+static void
+netTopologyTest(std::string const& name,
+                std::function<Simulation::pointer(int numNodes, int& cfgCount)> mkSim)
+{
+    ScaleReporter r({name + "nodes", "in-msg", "in-byte", "out-msg", "out-byte"});
+
+    for (int numNodes = 4; numNodes < 64; numNodes += 4)
+    {
+        auto cfgCount = 0;
+        auto sim = mkSim(numNodes, cfgCount);
+        sim->startAllNodes();
+        auto nodes = sim->getNodes();
+        assert(!nodes.empty());
+        auto& app = *nodes[0];
+        auto& lg = app.getLoadGenerator();
+        closeLedger(app);
+
+        generateAccountsAndCloseLedger(app, 50);
+        closeLedger(app);
+
+        app.reportCfgMetrics();
+
+        auto& inmsg = app.getMetrics().NewMeter({"overlay", "message", "read"}, "message");
+        auto& inbyte = app.getMetrics().NewMeter({"overlay", "byte", "read"}, "byte");
+
+        auto& outmsg = app.getMetrics().NewMeter({"overlay", "message", "write"}, "message");
+        auto& outbyte = app.getMetrics().NewMeter({"overlay", "byte", "write"}, "byte");
+
+        r.write({(double)numNodes,
+                    (double)inmsg.count(),
+                    (double)inbyte.count(),
+                    (double)outmsg.count(),
+                    (double)outbyte.count(),
+                    });
+    }
+}
+
+TEST_CASE("Mesh nodes vs. network traffic", "[scalability][hide]")
+{
+    netTopologyTest(
+        "mesh",
+        [&](int numNodes, int& cfgCount) -> Simulation::pointer {
+            return Topologies::core(
+                numNodes, 1.0, Simulation::OVER_LOOPBACK,
+                sha256(fmt::format("nodes-{:d}", numNodes)),
+                [&]() -> Config {
+                    Config res = getTestConfig(cfgCount++);
+                    res.ARTIFICIALLY_ACCELERATE_TIME_FOR_TESTING = true;
+                    res.MAX_PEER_CONNECTIONS = 1000;
+                    return res;
+                });
+        });
+}
+
+TEST_CASE("Cycle nodes vs. network traffic", "[scalability][hide]")
+{
+    netTopologyTest(
+        "cycle",
+        [&](int numNodes, int& cfgCount) -> Simulation::pointer {
+            return Topologies::cycle(
+                numNodes, 1.0, Simulation::OVER_LOOPBACK,
+                sha256(fmt::format("nodes-{:d}", numNodes)),
+                [&]() -> Config {
+                    Config res = getTestConfig(cfgCount++);
+                    res.ARTIFICIALLY_ACCELERATE_TIME_FOR_TESTING = true;
+                    res.MAX_PEER_CONNECTIONS = 1000;
+                    return res;
+                });
+        });
+}
+
+TEST_CASE("Branched-cycle nodes vs. network traffic", "[scalability][hide]")
+{
+    netTopologyTest(
+        "branchedcycle",
+        [&](int numNodes, int& cfgCount) -> Simulation::pointer {
+            return Topologies::branchedcycle(
+                numNodes, 1.0, Simulation::OVER_LOOPBACK,
+                sha256(fmt::format("nodes-{:d}", numNodes)),
+                [&]() -> Config {
+                    Config res = getTestConfig(cfgCount++);
+                    res.ARTIFICIALLY_ACCELERATE_TIME_FOR_TESTING = true;
+                    res.MAX_PEER_CONNECTIONS = 1000;
+                    return res;
+                });
+        });
+}
+
+TEST_CASE("Bucket-list entries vs. write throughput", "[scalability][hide]")
+{
+    VirtualClock clock;
+    Config const& cfg = getTestConfig();
+
+    Application::pointer app = Application::create(clock, cfg);
+    autocheck::generator<std::vector<LedgerKey>> deadGen;
+
+    auto& obj = app->getMetrics().NewMeter({"bucket", "object", "insert"}, "object");
+    auto& batch = app->getMetrics().NewTimer({"bucket", "batch", "add"});
+    auto& byte = app->getMetrics().NewMeter({"bucket", "byte", "insert"}, "byte");
+    auto& merges = app->getMetrics().NewTimer({"bucket", "snap", "merge"});
+
+    ScaleReporter r({"bucketobjs", "bytes", "objrate", "byterate",
+                "batchlatency99", "batchlatencymax",
+                "merges", "mergelatencymax", "mergelatencymean"});
+
+    for (uint32_t i = 1;
+         !app->getClock().getIOService().stopped() && i < 0x200000; ++i)
+    {
+        app->getClock().crank(false);
+        app->getBucketManager()
+            .addBatch(*app, i, LedgerTestUtils::generateValidLedgerEntries(100),
+                      deadGen(5));
+
+        if ((i & 0xff) == 0xff)
+        {
+            r.write({(double)obj.count(),
+                        (double)byte.count(),
+                        obj.one_minute_rate(),
+                        byte.one_minute_rate(),
+                        batch.GetSnapshot().get99thPercentile(),
+                        batch.max(),
+                        (double)merges.count(),
+                        merges.max(),
+                        merges.mean()});
+
+            app->getBucketManager().forgetUnreferencedBuckets();
+        }
     }
 }

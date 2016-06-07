@@ -48,8 +48,10 @@ CommandHandler::CommandHandler(Application& app) : mApp(app)
         LOG(INFO) << "Listening on " << ipStr << ":"
                   << mApp.getConfig().HTTP_PORT << " for HTTP requests";
 
+        int httpMaxClient = mApp.getConfig().HTTP_MAX_CLIENT;
+
         mServer = stellar::make_unique<http::server::server>(
-            app.getClock().getIOService(), ipStr, mApp.getConfig().HTTP_PORT);
+            app.getClock().getIOService(), ipStr, mApp.getConfig().HTTP_PORT, httpMaxClient);
     }
     else
     {
@@ -284,12 +286,12 @@ CommandHandler::fileNotFound(std::string const& params, std::string& retStr)
         "</p><p><h1> /scp?[limit=n]</h1>"
         "returns a JSON object with the internal state of the SCP engine for "
         "the last n (default 2) ledgers."
-        "</p><p><h1> /tx?blob=HEX</h1>"
+        "</p><p><h1> /tx?blob=BASE64</h1>"
         "submit a transaction to the network.<br>"
-        "blob is a hex encoded XDR serialized 'TransactionEnvelope'<br>"
+        "blob is a base64 encoded XDR serialized 'TransactionEnvelope'<br>"
         "returns a JSON object<br>"
         "wasReceived: boolean, true if transaction was queued properly<br>"
-        "result: hex encoded, XDR serialized 'TransactionResult'<br>"
+        "result: base64 encoded, XDR serialized 'TransactionResult'<br>"
         "</p><p><h1> /dropcursor?id=XYZ</h1> deletes the tracking cursor with "
         "identified by `id`. See `setcursor` for more information"
         "</p><p><h1> /setcursor?id=ID&cursor=N</h1> sets or creates a cursor "
@@ -468,6 +470,18 @@ CommandHandler::logRotate(std::string const& params, std::string& retStr)
 void
 CommandHandler::catchup(std::string const& params, std::string& retStr)
 {
+    switch (mApp.getLedgerManager().getState())
+    {
+    case LedgerManager::LM_BOOTING_STATE:
+        retStr = "Ledger Manager is still booting, try later";
+        return;
+    case LedgerManager::LM_CATCHING_UP_STATE:
+        retStr = "Catchup already in progress";
+        return;
+    default:
+        break;
+    }
+
     HistoryManager::CatchupMode mode = HistoryManager::CATCHUP_MINIMAL;
     std::map<std::string, std::string> retMap;
     http::server::server::parseParams(params, retMap);

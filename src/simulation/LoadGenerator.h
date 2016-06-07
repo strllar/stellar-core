@@ -98,13 +98,16 @@ class LoadGenerator
     struct AccountInfo : public std::enable_shared_from_this<AccountInfo>
     {
         AccountInfo(size_t id, SecretKey key, int64_t balance,
-                    SequenceNumber seq, LoadGenerator& loadGen);
+                    SequenceNumber seq, uint32_t lastChangedLedger,
+                    LoadGenerator& loadGen);
         size_t mId;
         SecretKey mKey;
         int64_t mBalance;
         SequenceNumber mSeq;
+        uint32_t mLastChangedLedger;
 
         void establishTrust(AccountInfoPtr a);
+        bool canUseInLedger(uint32_t currentLedger);
 
         // Used when this account trusts some other account's credits.
         std::vector<TrustLineInfo> mTrustLines;
@@ -121,6 +124,8 @@ class LoadGenerator
         AccountInfoPtr mBuyCredit;
         AccountInfoPtr mSellCredit;
 
+        void createDirectly(Application& app);
+        void debitDirectly(Application& app, int64_t debitAmount);
         TxInfo creationTransaction();
 
       private:
@@ -162,6 +167,7 @@ class LoadGenerator
         int64_t mAmount;
         std::vector<AccountInfoPtr> mPath;
 
+        void touchAccounts(uint32_t ledger);
         bool execute(Application& app);
 
         void toTransactionFrames(Hash const& networkID,

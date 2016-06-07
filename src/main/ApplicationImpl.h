@@ -81,6 +81,8 @@ class ApplicationImpl : public Application
     virtual void generateLoad(uint32_t nAccounts, uint32_t nTxs,
                               uint32_t txRate, bool autoRate) override;
 
+    virtual LoadGenerator& getLoadGenerator() override;
+
     virtual void checkDB() override;
 
     virtual void maintenance() override;
@@ -118,7 +120,7 @@ class ApplicationImpl : public Application
     std::unique_ptr<Herder> mHerder;
     std::unique_ptr<BucketManager> mBucketManager;
     std::unique_ptr<HistoryManager> mHistoryManager;
-    std::unique_ptr<ProcessManager> mProcessManager;
+    std::shared_ptr<ProcessManager> mProcessManager;
     std::unique_ptr<CommandHandler> mCommandHandler;
     std::shared_ptr<WorkManager> mWorkManager;
     std::unique_ptr<PersistentState> mPersistentState;

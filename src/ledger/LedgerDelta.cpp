@@ -134,10 +134,12 @@ LedgerDelta::deleteEntry(LedgerKey const& k)
     }
     else
     {
-        assert(mDelete.find(k) == mDelete.end()); // double delete is invalid
-        // only keep the delete
+        if(mDelete.find(k) == mDelete.end())
+        {
+            mDelete.insert(k);
+        }// else already being deleted
+
         mMod.erase(k);
-        mDelete.insert(k);
     }
 }
 
@@ -253,8 +255,7 @@ LedgerDelta::addCurrentMeta(LedgerEntryChanges& changes,
     auto it = mPrevious.find(key);
     if (it != mPrevious.end())
     {
-        // if the old value is from a previous ledger
-        // we emit it
+        // if the old value is from a previous ledger we emit it
         auto const& e = it->second->mEntry;
         if (e.lastModifiedLedgerSeq != mCurrentHeader.mHeader.ledgerSeq)
         {
@@ -352,6 +353,11 @@ LedgerDelta::markMeters(Application& app) const
                 .NewMeter({"ledger", "offer", "add"}, "entry")
                 .Mark();
             break;
+        case DATA:
+            app.getMetrics()
+                .NewMeter({ "ledger", "data", "add" }, "entry")
+                .Mark();
+            break;
         }
     }
 
@@ -374,6 +380,11 @@ LedgerDelta::markMeters(Application& app) const
                 .NewMeter({"ledger", "offer", "modify"}, "entry")
                 .Mark();
             break;
+        case DATA:
+            app.getMetrics()
+                .NewMeter({ "ledger", "data", "modify" }, "entry")
+                .Mark();
+            break;
         }
     }
 
@@ -394,6 +405,11 @@ LedgerDelta::markMeters(Application& app) const
         case OFFER:
             app.getMetrics()
                 .NewMeter({"ledger", "offer", "delete"}, "entry")
+                .Mark();
+            break;
+        case DATA:
+            app.getMetrics()
+                .NewMeter({ "ledger", "data", "delete" }, "entry")
                 .Mark();
             break;
         }

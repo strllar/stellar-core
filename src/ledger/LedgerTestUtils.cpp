@@ -35,15 +35,15 @@ clampHigh(T high, T& v)
     }
 }
 
-static void
-stripControlCharacters(std::string& s)
+template <typename T> void
+stripControlCharacters(T& s)
 {
     std::locale loc("C");
 
     for (auto it = s.begin(); it != s.end();)
     {
-        char c = *it;
-        if (c < 0 || std::iscntrl((char)c))
+        char c = static_cast<char>(*it);
+        if (c < 0 || std::iscntrl(c))
         {
             it = s.erase(it);
         }
@@ -116,6 +116,13 @@ makeValid(OfferEntry& o)
     clampLow(1, o.price.d);
 }
 
+void
+makeValid(DataEntry& d)
+{
+    stripControlCharacters(d.dataName);
+    stripControlCharacters(d.dataValue);
+}
+
 static auto validLedgerEntryGenerator = autocheck::map(
     [](LedgerEntry&& le, size_t s)
     {
@@ -132,6 +139,9 @@ static auto validLedgerEntryGenerator = autocheck::map(
 
         case ACCOUNT:
             makeValid(led.account());
+            break;
+        case DATA:
+            makeValid(led.data());
             break;
         }
 
