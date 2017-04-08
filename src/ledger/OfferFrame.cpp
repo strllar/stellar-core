@@ -3,11 +3,12 @@
 // of this distribution or at http://www.apache.org/licenses/LICENSE-2.0
 
 #include "ledger/OfferFrame.h"
-#include "transactions/ManageOfferOpFrame.h"
-#include "database/Database.h"
-#include "crypto/SecretKey.h"
-#include "crypto/SHA.h"
 #include "LedgerDelta.h"
+#include "crypto/KeyUtils.h"
+#include "crypto/SHA.h"
+#include "crypto/SecretKey.h"
+#include "database/Database.h"
+#include "transactions/ManageOfferOpFrame.h"
 #include "util/types.h"
 
 using namespace std;
@@ -63,7 +64,8 @@ OfferFrame::OfferFrame(OfferFrame const& from) : OfferFrame(from.mEntry)
 {
 }
 
-OfferFrame& OfferFrame::operator=(OfferFrame const& other)
+OfferFrame&
+OfferFrame::operator=(OfferFrame const& other)
 {
     if (&other != this)
     {
@@ -133,7 +135,7 @@ OfferFrame::loadOffer(AccountID const& sellerID, uint64_t offerID, Database& db,
 {
     OfferFrame::pointer retOffer;
 
-    std::string actIDStrKey = PubKeyUtils::toStrKey(sellerID);
+    std::string actIDStrKey = KeyUtils::toStrKey(sellerID);
 
     std::string sql = offerColumnSelector;
     sql += " WHERE sellerid = :id AND offerid = :offerid";
@@ -143,10 +145,9 @@ OfferFrame::loadOffer(AccountID const& sellerID, uint64_t offerID, Database& db,
     st.exchange(use(offerID));
 
     auto timer = db.getSelectTimer("offer");
-    loadOffers(prep, [&retOffer](LedgerEntry const& offer)
-               {
-                   retOffer = make_shared<OfferFrame>(offer);
-               });
+    loadOffers(prep, [&retOffer](LedgerEntry const& offer) {
+        retOffer = make_shared<OfferFrame>(offer);
+    });
 
     if (delta && retOffer)
     {
@@ -190,7 +191,7 @@ OfferFrame::loadOffers(StatementContext& prep,
     st.execute(true);
     while (st.got_data())
     {
-        oe.sellerID = PubKeyUtils::fromStrKey(actIDStrKey);
+        oe.sellerID = KeyUtils::fromStrKey<PublicKey>(actIDStrKey);
         if ((buyingAssetType > ASSET_TYPE_CREDIT_ALPHANUM12) ||
             (sellingAssetType > ASSET_TYPE_CREDIT_ALPHANUM12))
             throw std::runtime_error("bad database state");
@@ -208,14 +209,14 @@ OfferFrame::loadOffers(StatementContext& prep,
             if (sellingAssetType == ASSET_TYPE_CREDIT_ALPHANUM12)
             {
                 oe.selling.alphaNum12().issuer =
-                    PubKeyUtils::fromStrKey(sellingIssuerStrKey);
+                    KeyUtils::fromStrKey<PublicKey>(sellingIssuerStrKey);
                 strToAssetCode(oe.selling.alphaNum12().assetCode,
                                sellingAssetCode);
             }
             else if (sellingAssetType == ASSET_TYPE_CREDIT_ALPHANUM4)
             {
                 oe.selling.alphaNum4().issuer =
-                    PubKeyUtils::fromStrKey(sellingIssuerStrKey);
+                    KeyUtils::fromStrKey<PublicKey>(sellingIssuerStrKey);
                 strToAssetCode(oe.selling.alphaNum4().assetCode,
                                sellingAssetCode);
             }
@@ -232,14 +233,14 @@ OfferFrame::loadOffers(StatementContext& prep,
             if (buyingAssetType == ASSET_TYPE_CREDIT_ALPHANUM12)
             {
                 oe.buying.alphaNum12().issuer =
-                    PubKeyUtils::fromStrKey(buyingIssuerStrKey);
+                    KeyUtils::fromStrKey<PublicKey>(buyingIssuerStrKey);
                 strToAssetCode(oe.buying.alphaNum12().assetCode,
                                buyingAssetCode);
             }
             else if (buyingAssetType == ASSET_TYPE_CREDIT_ALPHANUM4)
             {
                 oe.buying.alphaNum4().issuer =
-                    PubKeyUtils::fromStrKey(buyingIssuerStrKey);
+                    KeyUtils::fromStrKey<PublicKey>(buyingIssuerStrKey);
                 strToAssetCode(oe.buying.alphaNum4().assetCode,
                                buyingAssetCode);
             }
@@ -278,13 +279,13 @@ OfferFrame::loadBestOffers(size_t numOffers, size_t offset,
         {
             assetCodeToStr(selling.alphaNum4().assetCode, sellingAssetCode);
             sellingIssuerStrKey =
-                PubKeyUtils::toStrKey(selling.alphaNum4().issuer);
+                KeyUtils::toStrKey(selling.alphaNum4().issuer);
         }
         else if (selling.type() == ASSET_TYPE_CREDIT_ALPHANUM12)
         {
             assetCodeToStr(selling.alphaNum12().assetCode, sellingAssetCode);
             sellingIssuerStrKey =
-                PubKeyUtils::toStrKey(selling.alphaNum12().issuer);
+                KeyUtils::toStrKey(selling.alphaNum12().issuer);
         }
         else
         {
@@ -304,14 +305,12 @@ OfferFrame::loadBestOffers(size_t numOffers, size_t offset,
         if (buying.type() == ASSET_TYPE_CREDIT_ALPHANUM4)
         {
             assetCodeToStr(buying.alphaNum4().assetCode, buyingAssetCode);
-            buyingIssuerStrKey =
-                PubKeyUtils::toStrKey(buying.alphaNum4().issuer);
+            buyingIssuerStrKey = KeyUtils::toStrKey(buying.alphaNum4().issuer);
         }
         else if (buying.type() == ASSET_TYPE_CREDIT_ALPHANUM12)
         {
             assetCodeToStr(buying.alphaNum12().assetCode, buyingAssetCode);
-            buyingIssuerStrKey =
-                PubKeyUtils::toStrKey(buying.alphaNum12().issuer);
+            buyingIssuerStrKey = KeyUtils::toStrKey(buying.alphaNum12().issuer);
         }
         else
         {
@@ -345,10 +344,9 @@ OfferFrame::loadBestOffers(size_t numOffers, size_t offset,
     st.exchange(use(offset));
 
     auto timer = db.getSelectTimer("offer");
-    loadOffers(prep, [&retOffers](LedgerEntry const& of)
-               {
-                   retOffers.emplace_back(make_shared<OfferFrame>(of));
-               });
+    loadOffers(prep, [&retOffers](LedgerEntry const& of) {
+        retOffers.emplace_back(make_shared<OfferFrame>(of));
+    });
 }
 
 void
@@ -357,7 +355,7 @@ OfferFrame::loadOffers(AccountID const& accountID,
                        Database& db)
 {
     std::string actIDStrKey;
-    actIDStrKey = PubKeyUtils::toStrKey(accountID);
+    actIDStrKey = KeyUtils::toStrKey(accountID);
 
     std::string sql = offerColumnSelector;
     sql += " WHERE sellerid = :id";
@@ -366,10 +364,9 @@ OfferFrame::loadOffers(AccountID const& accountID,
     st.exchange(use(actIDStrKey));
 
     auto timer = db.getSelectTimer("offer");
-    loadOffers(prep, [&retOffers](LedgerEntry const& of)
-               {
-                   retOffers.emplace_back(make_shared<OfferFrame>(of));
-               });
+    loadOffers(prep, [&retOffers](LedgerEntry const& of) {
+        retOffers.emplace_back(make_shared<OfferFrame>(of));
+    });
 }
 
 std::unordered_map<AccountID, std::vector<OfferFrame::pointer>>
@@ -381,18 +378,17 @@ OfferFrame::loadAllOffers(Database& db)
     auto prep = db.getPreparedStatement(sql);
 
     auto timer = db.getSelectTimer("offer");
-    loadOffers(prep, [&retOffers](LedgerEntry const& of)
-               {
-                   auto& thisUserOffers = retOffers[of.data.offer().sellerID];
-                   thisUserOffers.emplace_back(make_shared<OfferFrame>(of));
-               });
+    loadOffers(prep, [&retOffers](LedgerEntry const& of) {
+        auto& thisUserOffers = retOffers[of.data.offer().sellerID];
+        thisUserOffers.emplace_back(make_shared<OfferFrame>(of));
+    });
     return retOffers;
 }
 
 bool
 OfferFrame::exists(Database& db, LedgerKey const& key)
 {
-    std::string actIDStrKey = PubKeyUtils::toStrKey(key.offer().sellerID);
+    std::string actIDStrKey = KeyUtils::toStrKey(key.offer().sellerID);
     int exists = 0;
     auto timer = db.getSelectTimer("offer-exists");
     auto prep =
@@ -461,7 +457,7 @@ OfferFrame::storeUpdateHelper(LedgerDelta& delta, Database& db, bool insert)
         throw std::runtime_error("Invalid asset");
     }
 
-    std::string actIDStrKey = PubKeyUtils::toStrKey(mOffer.sellerID);
+    std::string actIDStrKey = KeyUtils::toStrKey(mOffer.sellerID);
 
     unsigned int sellingType = mOffer.selling.type();
     unsigned int buyingType = mOffer.buying.type();
@@ -472,14 +468,14 @@ OfferFrame::storeUpdateHelper(LedgerDelta& delta, Database& db, bool insert)
     if (sellingType == ASSET_TYPE_CREDIT_ALPHANUM4)
     {
         sellingIssuerStrKey =
-            PubKeyUtils::toStrKey(mOffer.selling.alphaNum4().issuer);
+            KeyUtils::toStrKey(mOffer.selling.alphaNum4().issuer);
         assetCodeToStr(mOffer.selling.alphaNum4().assetCode, sellingAssetCode);
         selling_ind = soci::i_ok;
     }
     else if (sellingType == ASSET_TYPE_CREDIT_ALPHANUM12)
     {
         sellingIssuerStrKey =
-            PubKeyUtils::toStrKey(mOffer.selling.alphaNum12().issuer);
+            KeyUtils::toStrKey(mOffer.selling.alphaNum12().issuer);
         assetCodeToStr(mOffer.selling.alphaNum12().assetCode, sellingAssetCode);
         selling_ind = soci::i_ok;
     }
@@ -487,14 +483,14 @@ OfferFrame::storeUpdateHelper(LedgerDelta& delta, Database& db, bool insert)
     if (buyingType == ASSET_TYPE_CREDIT_ALPHANUM4)
     {
         buyingIssuerStrKey =
-            PubKeyUtils::toStrKey(mOffer.buying.alphaNum4().issuer);
+            KeyUtils::toStrKey(mOffer.buying.alphaNum4().issuer);
         assetCodeToStr(mOffer.buying.alphaNum4().assetCode, buyingAssetCode);
         buying_ind = soci::i_ok;
     }
     else if (buyingType == ASSET_TYPE_CREDIT_ALPHANUM12)
     {
         buyingIssuerStrKey =
-            PubKeyUtils::toStrKey(mOffer.buying.alphaNum12().issuer);
+            KeyUtils::toStrKey(mOffer.buying.alphaNum12().issuer);
         assetCodeToStr(mOffer.buying.alphaNum12().assetCode, buyingAssetCode);
         buying_ind = soci::i_ok;
     }

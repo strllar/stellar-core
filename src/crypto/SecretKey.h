@@ -4,10 +4,12 @@
 // under the Apache License, Version 2.0. See the COPYING file at the root
 // of this distribution or at http://www.apache.org/licenses/LICENSE-2.0
 
+#include "crypto/KeyUtils.h"
 #include "xdr/Stellar-types.h"
-#include <ostream>
-#include <functional>
+
 #include <array>
+#include <functional>
+#include <ostream>
 
 namespace stellar
 {
@@ -15,27 +17,30 @@ namespace stellar
 using xdr::operator==;
 
 class ByteSlice;
+struct SignerKey;
 
 class SecretKey
 {
     using uint512 = xdr::opaque_array<64>;
-    CryptoKeyType mKeyType;
+    PublicKeyType mKeyType;
     uint512 mSecretKey;
-
-  public:
-    SecretKey();
 
     struct Seed
     {
-        CryptoKeyType mKeyType;
+        PublicKeyType mKeyType;
         uint256 mSeed;
+        ~Seed();
     };
-
-    // Get the public key portion of this secret key.
-    PublicKey getPublicKey() const;
 
     // Get the seed portion of this secret key.
     Seed getSeed() const;
+
+  public:
+    SecretKey();
+    ~SecretKey();
+
+    // Get the public key portion of this secret key.
+    PublicKey getPublicKey() const;
 
     // Get the seed portion of this secret key as a StrKey string.
     std::string getStrKeySeed() const;
@@ -54,14 +59,38 @@ class SecretKey
 
     // Decode a secret key from a provided StrKey seed value.
     static SecretKey fromStrKeySeed(std::string const& strKeySeed);
+    static SecretKey
+    fromStrKeySeed(std::string&& strKeySeed)
+    {
+        SecretKey ret = fromStrKeySeed(strKeySeed);
+        for (std::size_t i = 0; i < strKeySeed.size(); ++i)
+            strKeySeed[i] = 0;
+        return ret;
+    }
 
     // Decode a secret key from a binary seed value.
     static SecretKey fromSeed(ByteSlice const& seed);
 
-    bool operator==(SecretKey const& rh)
+    bool
+    operator==(SecretKey const& rh)
     {
         return (mKeyType == rh.mKeyType) && (mSecretKey == rh.mSecretKey);
     }
+};
+
+template <> struct KeyFunctions<PublicKey>
+{
+    struct getKeyTypeEnum
+    {
+        using type = PublicKeyType;
+    };
+
+    static std::string getKeyTypeName();
+    static bool getKeyVersionIsSupported(strKey::StrKeyVersionByte keyVersion);
+    static PublicKeyType toKeyType(strKey::StrKeyVersionByte keyVersion);
+    static strKey::StrKeyVersionByte toKeyVersion(PublicKeyType keyType);
+    static uint256& getKeyValue(PublicKey& key);
+    static uint256 const& getKeyValue(PublicKey const& key);
 };
 
 // public key utility functions
@@ -74,17 +103,6 @@ bool verifySig(PublicKey const& key, Signature const& signature,
 void clearVerifySigCache();
 void flushVerifySigCacheCounts(uint64_t& hits, uint64_t& misses,
                                uint64_t& ignores);
-
-std::string toShortString(PublicKey const& pk);
-
-std::string toStrKey(PublicKey const& pk);
-
-PublicKey fromStrKey(std::string const& s);
-
-// returns hint from key
-SignatureHint getHint(PublicKey const& pk);
-// returns true if the hint matches the key
-bool hasHint(PublicKey const& pk, SignatureHint const& hint);
 
 PublicKey random();
 }

@@ -4,15 +4,14 @@
 // under the Apache License, Version 2.0. See the COPYING file at the root
 // of this distribution or at http://www.apache.org/licenses/LICENSE-2.0
 
-#include <vector>
-#include <deque>
-#include <unordered_map>
-#include <memory>
+#include "PendingEnvelopes.h"
 #include "herder/Herder.h"
 #include "scp/SCP.h"
 #include "util/Timer.h"
-#include <overlay/ItemFetcher.h>
-#include "PendingEnvelopes.h"
+#include <deque>
+#include <memory>
+#include <unordered_map>
+#include <vector>
 
 namespace medida
 {
@@ -85,7 +84,6 @@ class HerderImpl : public Herder, public SCPDriver
                     std::function<void()> cb) override;
 
     void emitEnvelope(SCPEnvelope const& envelope) override;
-    bool recvTransactions(TxSetFramePtr txSet);
     // Extra SCP methods overridden solely to increment metrics.
     void updatedCandidateValue(uint64 slotIndex, Value const& value) override;
     void startedBallotProtocol(uint64 slotIndex,
@@ -98,12 +96,12 @@ class HerderImpl : public Herder, public SCPDriver
 
     TransactionSubmitStatus recvTransaction(TransactionFramePtr tx) override;
 
-    void recvSCPEnvelope(SCPEnvelope const& envelope) override;
+    EnvelopeStatus recvSCPEnvelope(SCPEnvelope const& envelope) override;
 
     void sendSCPStateToPeer(uint32 ledgerSeq, PeerPtr peer) override;
 
-    void recvSCPQuorumSet(Hash const& hash, const SCPQuorumSet& qset) override;
-    void recvTxSet(Hash const& hash, const TxSetFrame& txset) override;
+    bool recvSCPQuorumSet(Hash const& hash, const SCPQuorumSet& qset) override;
+    bool recvTxSet(Hash const& hash, const TxSetFrame& txset) override;
     void peerDoesntHave(MessageType type, uint256 const& itemID,
                         PeerPtr peer) override;
     TxSetFramePtr getTxSet(Hash const& hash) override;
@@ -116,8 +114,6 @@ class HerderImpl : public Herder, public SCPDriver
     SequenceNumber getMaxSeqInPendingTxs(AccountID const&) override;
 
     void triggerNextLedger(uint32_t ledgerSeqToTrigger) override;
-
-    bool isQuorumSetSane(SCPQuorumSet const& qSet, bool extraChecks) override;
 
     bool resolveNodeID(std::string const& s, PublicKey& retKey) override;
 
@@ -222,6 +218,10 @@ class HerderImpl : public Herder, public SCPDriver
 
     // saves the SCP messages that the instance sent out last
     void persistSCPState(uint64 slot);
+
+    // create upgrades for given ledger
+    std::vector<LedgerUpgrade>
+    prepareUpgrades(const LedgerHeader& header) const;
 
     // called every time we get ledger externalized
     // ensures that if we don't hear from the network, we throw the herder into

@@ -2,14 +2,17 @@
 // under the ISC License. See the COPYING file at the top-level directory of
 // this distribution or at http://opensource.org/licenses/ISC
 
+#include "lib/catch.hpp"
+#include "lib/json/json.h"
 #include "main/Application.h"
 #include "overlay/LoopbackPeer.h"
-#include "util/make_unique.h"
-#include "main/test.h"
-#include "lib/catch.hpp"
+#include "test/TestAccount.h"
+#include "test/TestExceptions.h"
+#include "test/TestUtils.h"
+#include "test/TxTests.h"
+#include "test/test.h"
 #include "util/Logging.h"
-#include "lib/json/json.h"
-#include "TxTests.h"
+#include "util/make_unique.h"
 #include "xdrpp/marshal.h"
 
 using namespace stellar;
@@ -27,30 +30,25 @@ TEST_CASE("manage data", "[tx][managedata]")
     Config const& cfg = getTestConfig();
 
     VirtualClock clock;
-    Application::pointer appPtr = Application::create(clock, cfg);
-    Application& app = *appPtr;
+    ApplicationEditableVersion app{clock, cfg};
+    auto& db = app.getDatabase();
 
     app.start();
-    upgradeToCurrentLedgerVersion(app);
 
     // set up world
-    SecretKey root = getRoot(app.getNetworkID());
-    SecretKey gateway = getAccount("gw");
+    auto root = TestAccount::createRoot(app);
 
-    SequenceNumber rootSeq = getAccountSeqNum(root, app) + 1;
+    const int64_t minBalance = app.getLedgerManager().getMinBalance(3) - 100;
 
-    const int64_t minBalance = app.getLedgerManager().getMinBalance(3)-100;
+    auto gateway = root.create("gw", minBalance);
 
-    applyCreateAccountTx(app, root, gateway, rootSeq++, minBalance);
-    SequenceNumber gateway_seq = getAccountSeqNum(gateway, app) + 1;
-
-    DataValue value,value2;
+    DataValue value, value2;
     value.resize(64);
     value2.resize(64);
-    for(int n = 0; n < 64; n++)
+    for (int n = 0; n < 64; n++)
     {
-        value[n] = (unsigned char) n;
-        value2[n] = (unsigned char) n + 3;
+        value[n] = (unsigned char)n;
+        value2[n] = (unsigned char)n + 3;
     }
 
     std::string t1("test");
@@ -58,21 +56,78 @@ TEST_CASE("manage data", "[tx][managedata]")
     std::string t3("test3");
     std::string t4("test4");
 
-    applyManageData(app, gateway, t1, &value, gateway_seq++);
-    applyManageData(app, gateway, t2, &value, gateway_seq++);
-    // try to add too much data
-    applyManageData(app, gateway, t3, &value, gateway_seq++, MANAGE_DATA_LOW_RESERVE);
+    SECTION("protocol version 1")
+    {
+        app.getLedgerManager().setCurrentLedgerVersion(1);
+        REQUIRE_THROWS_AS(gateway.manageData(t1, &value),
+                          ex_MANAGE_DATA_NOT_SUPPORTED_YET);
+        REQUIRE_THROWS_AS(gateway.manageData(t2, &value),
+                          ex_MANAGE_DATA_NOT_SUPPORTED_YET);
+        // try to add too much data
+        REQUIRE_THROWS_AS(gateway.manageData(t3, &value),
+                          ex_MANAGE_DATA_NOT_SUPPORTED_YET);
 
-    // modify an existing data entry
-    applyManageData(app, gateway, t1, &value2, gateway_seq++);
+        // modify an existing data entry
+        REQUIRE_THROWS_AS(gateway.manageData(t1, &value2),
+                          ex_MANAGE_DATA_NOT_SUPPORTED_YET);
 
-    // clear an existing data entry
-    applyManageData(app, gateway, t1, nullptr, gateway_seq++);
-    
-    // can now add test3 since test was removed
-    applyManageData(app, gateway, t3, &value, gateway_seq++);
+        // clear an existing data entry
+        REQUIRE_THROWS_AS(gateway.manageData(t1, nullptr),
+                          ex_MANAGE_DATA_NOT_SUPPORTED_YET);
 
-    // fail to remove data entry that isn't present
-    applyManageData(app, gateway, t4, nullptr, gateway_seq++, MANAGE_DATA_NAME_NOT_FOUND);
+        // can now add test3 since test was removed
+        REQUIRE_THROWS_AS(gateway.manageData(t3, &value),
+                          ex_MANAGE_DATA_NOT_SUPPORTED_YET);
 
+        // fail to remove data entry that isn't present
+        REQUIRE_THROWS_AS(gateway.manageData(t4, nullptr),
+                          ex_MANAGE_DATA_NOT_SUPPORTED_YET);
+    }
+
+    for (auto v : {2, 4})
+    {
+        SECTION("protocol version " + std::to_string(v))
+        {
+            app.getLedgerManager().setCurrentLedgerVersion(v);
+            gateway.manageData(t1, &value);
+            gateway.manageData(t2, &value);
+            // try to add too much data
+            REQUIRE_THROWS_AS(gateway.manageData(t3, &value),
+                              ex_MANAGE_DATA_LOW_RESERVE);
+
+            // modify an existing data entry
+            gateway.manageData(t1, &value2);
+
+            // clear an existing data entry
+            gateway.manageData(t1, nullptr);
+
+            // can now add test3 since test was removed
+            gateway.manageData(t3, &value);
+
+            // fail to remove data entry that isn't present
+            REQUIRE_THROWS_AS(gateway.manageData(t4, nullptr),
+                              ex_MANAGE_DATA_NAME_NOT_FOUND);
+        }
+    }
+
+    SECTION("protocol version 3")
+    {
+        app.getLedgerManager().setCurrentLedgerVersion(3);
+        REQUIRE_THROWS_AS(gateway.manageData(t1, &value), ex_txINTERNAL_ERROR);
+        REQUIRE_THROWS_AS(gateway.manageData(t2, &value), ex_txINTERNAL_ERROR);
+        // try to add too much data
+        REQUIRE_THROWS_AS(gateway.manageData(t3, &value), ex_txINTERNAL_ERROR);
+
+        // modify an existing data entry
+        REQUIRE_THROWS_AS(gateway.manageData(t1, &value2), ex_txINTERNAL_ERROR);
+
+        // clear an existing data entry
+        REQUIRE_THROWS_AS(gateway.manageData(t1, nullptr), ex_txINTERNAL_ERROR);
+
+        // can now add test3 since test was removed
+        REQUIRE_THROWS_AS(gateway.manageData(t3, &value), ex_txINTERNAL_ERROR);
+
+        // fail to remove data entry that isn't present
+        REQUIRE_THROWS_AS(gateway.manageData(t4, nullptr), ex_txINTERNAL_ERROR);
+    }
 }

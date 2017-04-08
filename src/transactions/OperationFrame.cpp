@@ -4,24 +4,24 @@
 
 #include "util/asio.h"
 #include "OperationFrame.h"
-#include "main/Application.h"
-#include "xdrpp/marshal.h"
-#include <string>
-#include "util/Logging.h"
+#include "database/Database.h"
 #include "ledger/LedgerDelta.h"
-#include "transactions/TransactionFrame.h"
+#include "main/Application.h"
 #include "transactions/AllowTrustOpFrame.h"
-#include "transactions/CreateAccountOpFrame.h"
-#include "transactions/ManageOfferOpFrame.h"
-#include "transactions/CreatePassiveOfferOpFrame.h"
 #include "transactions/ChangeTrustOpFrame.h"
+#include "transactions/CreateAccountOpFrame.h"
+#include "transactions/CreatePassiveOfferOpFrame.h"
 #include "transactions/InflationOpFrame.h"
+#include "transactions/ManageDataOpFrame.h"
+#include "transactions/ManageOfferOpFrame.h"
 #include "transactions/MergeOpFrame.h"
 #include "transactions/PathPaymentOpFrame.h"
 #include "transactions/PaymentOpFrame.h"
 #include "transactions/SetOptionsOpFrame.h"
-#include "transactions/ManageDataOpFrame.h"
-#include "database/Database.h"
+#include "transactions/TransactionFrame.h"
+#include "util/Logging.h"
+#include "xdrpp/marshal.h"
+#include <string>
 
 #include "medida/meter.h"
 #include "medida/metrics_registry.h"
@@ -76,10 +76,11 @@ OperationFrame::OperationFrame(Operation const& op, OperationResult& res,
 }
 
 bool
-OperationFrame::apply(LedgerDelta& delta, Application& app)
+OperationFrame::apply(SignatureChecker& signatureChecker, LedgerDelta& delta,
+                      Application& app)
 {
     bool res;
-    res = checkValid(app, &delta);
+    res = checkValid(signatureChecker, app, &delta);
     if (res)
     {
         res = doApply(app, delta, app.getLedgerManager());
@@ -95,9 +96,10 @@ OperationFrame::getNeededThreshold() const
 }
 
 bool
-OperationFrame::checkSignature() const
+OperationFrame::checkSignature(SignatureChecker& signatureChecker) const
 {
-    return mParentTx.checkSignature(*mSourceAccount, getNeededThreshold());
+    return mParentTx.checkSignature(signatureChecker, *mSourceAccount,
+                                    getNeededThreshold());
 }
 
 AccountID const&
@@ -125,9 +127,9 @@ OperationFrame::getResultCode() const
 // make sure sig is correct
 // verifies that the operation is well formed (operation specific)
 bool
-OperationFrame::checkValid(Application& app, LedgerDelta* delta)
+OperationFrame::checkValid(SignatureChecker& signatureChecker, Application& app,
+                           LedgerDelta* delta)
 {
-    
     bool forApply = (delta != nullptr);
     if (!loadAccount(delta, app.getDatabase()))
     {
@@ -146,7 +148,7 @@ OperationFrame::checkValid(Application& app, LedgerDelta* delta)
         }
     }
 
-    if (!checkSignature())
+    if (!checkSignature(signatureChecker))
     {
         app.getMetrics()
             .NewMeter({"operation", "invalid", "bad-auth"}, "operation")

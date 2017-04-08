@@ -2,19 +2,20 @@
 // under the Apache License, Version 2.0. See the COPYING file at the root
 // of this distribution or at http://www.apache.org/licenses/LICENSE-2.0
 
+#include "overlay/OverlayManagerImpl.h"
+#include "crypto/KeyUtils.h"
 #include "crypto/SecretKey.h"
 #include "database/Database.h"
 #include "main/Application.h"
 #include "main/Config.h"
-#include "overlay/OverlayManagerImpl.h"
 #include "overlay/PeerRecord.h"
 #include "overlay/TCPPeer.h"
 #include "util/Logging.h"
 #include "util/make_unique.h"
 
-#include "medida/metrics_registry.h"
-#include "medida/meter.h"
 #include "medida/counter.h"
+#include "medida/meter.h"
+#include "medida/metrics_registry.h"
 
 #include <random>
 
@@ -89,8 +90,7 @@ OverlayManagerImpl::start()
     if (!mApp.getConfig().RUN_STANDALONE)
     {
         mTimer.async_wait(
-            [this]()
-            {
+            [this]() {
                 storeConfigPeers();
                 this->tick();
             },
@@ -101,10 +101,12 @@ OverlayManagerImpl::start()
 void
 OverlayManagerImpl::connectTo(std::string const& peerStr)
 {
-    PeerRecord pr;
-    if (PeerRecord::parseIPPort(peerStr, mApp, pr))
+    try
+    {
+        auto pr = PeerRecord::parseIPPort(peerStr, mApp);
         connectTo(pr);
-    else
+    }
+    catch (const std::runtime_error&)
     {
         CLOG(ERROR, "Overlay") << "Unable to add peer '" << peerStr << "'";
     }
@@ -113,25 +115,13 @@ OverlayManagerImpl::connectTo(std::string const& peerStr)
 void
 OverlayManagerImpl::connectTo(PeerRecord& pr)
 {
-    if (pr.mPort == 0)
-    {
-        CLOG(ERROR, "Overlay") << "Invalid port: " << pr.toString();
-        return;
-    }
-
-    if (!pr.mIP.size())
-    {
-        CLOG(ERROR, "Overlay") << "OverlayManagerImpl::connectTo Invalid IP ";
-        return;
-    }
-
     mConnectionsAttempted.Mark();
-    if (!getConnectedPeer(pr.mIP, pr.mPort))
+    if (!getConnectedPeer(pr.ip(), pr.port()))
     {
         pr.backOff(mApp.getClock());
         pr.storePeerRecord(mApp.getDatabase());
 
-        addConnectedPeer(TCPPeer::initiate(mApp, pr.mIP, pr.mPort));
+        addConnectedPeer(TCPPeer::initiate(mApp, pr.ip(), pr.port()));
     }
     else
     {
@@ -147,9 +137,9 @@ OverlayManagerImpl::storePeerList(std::vector<std::string> const& list,
 {
     for (auto const& peerStr : list)
     {
-        PeerRecord pr;
-        if (PeerRecord::parseIPPort(peerStr, mApp, pr))
+        try
         {
+            auto pr = PeerRecord::parseIPPort(peerStr, mApp);
             if (resetBackOff)
             {
                 pr.storePeerRecord(mApp.getDatabase());
@@ -159,7 +149,7 @@ OverlayManagerImpl::storePeerList(std::vector<std::string> const& list,
                 pr.insertIfNew(mApp.getDatabase());
             }
         }
-        else
+        catch (std::runtime_error&)
         {
             CLOG(ERROR, "Overlay") << "Unable to add peer '" << peerStr << "'";
         }
@@ -173,14 +163,19 @@ OverlayManagerImpl::storeConfigPeers()
     std::vector<std::string> ppeers;
     for (auto const& s : mApp.getConfig().PREFERRED_PEERS)
     {
-        PeerRecord pr;
-        if (PeerRecord::parseIPPort(s, mApp, pr))
+        try
         {
+            auto pr = PeerRecord::parseIPPort(s, mApp);
             auto r = mPreferredPeers.insert(pr.toString());
             if (r.second)
             {
                 ppeers.push_back(*r.first);
             }
+        }
+        catch (std::runtime_error&)
+        {
+            CLOG(ERROR, "Overlay") << "Unable to add preferred peer '" << s
+                                   << "'";
         }
     }
 
@@ -211,7 +206,7 @@ OverlayManagerImpl::connectToMorePeers(int max)
         {
             break;
         }
-        if (!getConnectedPeer(pr.mIP, pr.mPort))
+        if (!getConnectedPeer(pr.ip(), pr.port()))
         {
             connectTo(pr);
         }
@@ -233,12 +228,7 @@ OverlayManagerImpl::tick()
     }
 
     mTimer.expires_from_now(std::chrono::seconds(2));
-    mTimer.async_wait(
-        [this]()
-        {
-            this->tick();
-        },
-        VirtualTimer::onFailureNoop);
+    mTimer.async_wait([this]() { this->tick(); }, VirtualTimer::onFailureNoop);
 }
 
 Peer::pointer
@@ -339,7 +329,7 @@ OverlayManagerImpl::isPeerPreferred(Peer::pointer peer)
 
     if (peer->isAuthenticated())
     {
-        std::string kstr = PubKeyUtils::toStrKey(peer->getPeerID());
+        std::string kstr = KeyUtils::toStrKey(peer->getPeerID());
         std::vector<std::string> const& pk =
             mApp.getConfig().PREFERRED_PEER_KEYS;
         if (std::find(pk.begin(), pk.end(), kstr) != pk.end())
@@ -360,8 +350,7 @@ OverlayManagerImpl::getRandomPeers()
 {
     std::vector<std::shared_ptr<Peer>> goodPeers(mPeers.size());
     auto it = std::copy_if(mPeers.begin(), mPeers.end(), goodPeers.begin(),
-                           [](std::shared_ptr<Peer> const& p)
-                           {
+                           [](std::shared_ptr<Peer> const& p) {
                                return p && p->isAuthenticated();
                            });
     goodPeers.resize(std::distance(goodPeers.begin(), it));

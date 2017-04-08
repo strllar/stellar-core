@@ -3,16 +3,16 @@
 // of this distribution or at http://www.apache.org/licenses/LICENSE-2.0
 
 #include "overlay/LoopbackPeer.h"
-#include "util/Logging.h"
-#include "main/Application.h"
-#include "overlay/StellarXDR.h"
-#include "xdrpp/marshal.h"
-#include "overlay/LoadManager.h"
-#include "overlay/OverlayManager.h"
 #include "crypto/Random.h"
+#include "main/Application.h"
+#include "medida/meter.h"
 #include "medida/metrics_registry.h"
 #include "medida/timer.h"
-#include "medida/meter.h"
+#include "overlay/LoadManager.h"
+#include "overlay/OverlayManager.h"
+#include "overlay/StellarXDR.h"
+#include "util/Logging.h"
+#include "xdrpp/marshal.h"
 
 namespace stellar
 {
@@ -78,10 +78,8 @@ LoopbackPeer::drop()
     auto remote = mRemote.lock();
     if (remote)
     {
-        remote->getApp().getClock().getIOService().post([remote]()
-                                                        {
-                                                            remote->drop();
-                                                        });
+        remote->getApp().getClock().getIOService().post(
+            [remote]() { remote->drop(); });
     }
 }
 
@@ -113,7 +111,7 @@ duplicateMessage(xdr::msg_ptr const& msg)
 {
     xdr::msg_ptr msg2 = xdr::message_t::alloc(msg->size());
     memcpy(msg2->raw_data(), msg->raw_data(), msg->raw_size());
-    return std::move(msg2);
+    return msg2;
 }
 
 void
@@ -129,10 +127,8 @@ LoopbackPeer::processInQueue()
         if (!mInQueue.empty())
         {
             auto self = static_pointer_cast<LoopbackPeer>(shared_from_this());
-            mApp.getClock().getIOService().post([self]()
-                                                {
-                                                    self->processInQueue();
-                                                });
+            mApp.getClock().getIOService().post(
+                [self]() { self->processInQueue(); });
         }
     }
 }
@@ -157,7 +153,7 @@ LoopbackPeer::deliverOne()
         if (mDuplicateProb(mGenerator))
         {
             CLOG(INFO, "Overlay") << "LoopbackPeer duplicated message";
-            mOutQueue.emplace_front(std::move(duplicateMessage(msg)));
+            mOutQueue.emplace_front(duplicateMessage(msg));
             mStats.messagesDuplicated++;
         }
 
@@ -198,10 +194,7 @@ LoopbackPeer::deliverOne()
             // move msg to remote's in queue
             remote->mInQueue.emplace(std::move(msg));
             remote->getApp().getClock().getIOService().post(
-                [remote]()
-                {
-                    remote->processInQueue();
-                });
+                [remote]() { remote->processInQueue(); });
         }
         LoadManager::PeerContext loadCtx(mApp, mPeerID);
         mLastWrite = mApp.getClock().now();
@@ -377,10 +370,7 @@ LoopbackPeerConnection::LoopbackPeerConnection(Application& initiator,
 
     auto init = mInitiator;
     mInitiator->getApp().getClock().getIOService().post(
-        [init]()
-        {
-            init->connectHandler(asio::error_code());
-        });
+        [init]() { init->connectHandler(asio::error_code()); });
 }
 
 LoopbackPeerConnection::~LoopbackPeerConnection()

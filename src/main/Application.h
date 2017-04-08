@@ -4,9 +4,9 @@
 // under the Apache License, Version 2.0. See the COPYING file at the root
 // of this distribution or at http://www.apache.org/licenses/LICENSE-2.0
 
+#include "xdr/Stellar-types.h"
 #include <memory>
 #include <string>
-#include "xdr/Stellar-types.h"
 
 namespace asio
 {
@@ -34,6 +34,8 @@ class PersistentState;
 class LoadGenerator;
 class CommandHandler;
 class WorkManager;
+class BanManager;
+class StatusManager;
 
 /*
  * State of a single instance of the stellar-core application.
@@ -157,8 +159,6 @@ class Application
     // (derived from the state of other modules
     virtual State getState() const = 0;
     virtual std::string getStateHuman() const = 0;
-    virtual std::string getExtraStateInfo() const = 0;
-    virtual void setExtraStateInfo(std::string const& stateStr) = 0;
     virtual bool isStopping() const = 0;
 
     // Get the external VirtualClock to which this Application is bound.
@@ -187,6 +187,8 @@ class Application
     virtual PersistentState& getPersistentState() = 0;
     virtual CommandHandler& getCommandHandler() = 0;
     virtual WorkManager& getWorkManager() = 0;
+    virtual BanManager& getBanManager() = 0;
+    virtual StatusManager& getStatusManager() = 0;
 
     // Get the worker IO service, served by background threads. Work posted to
     // this io_service will execute in parallel with the calling thread, so use

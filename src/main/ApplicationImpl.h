@@ -4,12 +4,12 @@
 // under the Apache License, Version 2.0. See the COPYING file at the root
 // of this distribution or at http://www.apache.org/licenses/LICENSE-2.0
 
-#include "util/Timer.h"
 #include "Application.h"
 #include "main/Config.h"
 #include "main/PersistentState.h"
-#include <thread>
 #include "medida/timer_context.h"
+#include "util/Timer.h"
+#include <thread>
 
 namespace medida
 {
@@ -28,6 +28,7 @@ class ProcessManager;
 class CommandHandler;
 class Database;
 class LoadGenerator;
+class NtpSynchronizationChecker;
 
 class ApplicationImpl : public Application
 {
@@ -41,8 +42,6 @@ class ApplicationImpl : public Application
 
     virtual State getState() const override;
     virtual std::string getStateHuman() const override;
-    virtual std::string getExtraStateInfo() const override;
-    virtual void setExtraStateInfo(std::string const& stateStr) override;
     virtual bool isStopping() const override;
     virtual VirtualClock& getClock() override;
     virtual medida::MetricsRegistry& getMetrics() override;
@@ -59,6 +58,8 @@ class ApplicationImpl : public Application
     virtual PersistentState& getPersistentState() override;
     virtual CommandHandler& getCommandHandler() override;
     virtual WorkManager& getWorkManager() override;
+    virtual BanManager& getBanManager() override;
+    virtual StatusManager& getStatusManager() override;
 
     virtual asio::io_service& getWorkerIOService() override;
 
@@ -95,6 +96,11 @@ class ApplicationImpl : public Application
 
     virtual Hash const& getNetworkID() const override;
 
+  protected:
+    std::unique_ptr<LedgerManager>
+        mLedgerManager;              // allow to change that for tests
+    std::unique_ptr<Herder> mHerder; // allow to change that for tests
+
   private:
     VirtualClock& mVirtualClock;
     Config mConfig;
@@ -116,8 +122,6 @@ class ApplicationImpl : public Application
     std::unique_ptr<Database> mDatabase;
     std::unique_ptr<TmpDirManager> mTmpDirManager;
     std::unique_ptr<OverlayManager> mOverlayManager;
-    std::unique_ptr<LedgerManager> mLedgerManager;
-    std::unique_ptr<Herder> mHerder;
     std::unique_ptr<BucketManager> mBucketManager;
     std::unique_ptr<HistoryManager> mHistoryManager;
     std::shared_ptr<ProcessManager> mProcessManager;
@@ -125,6 +129,9 @@ class ApplicationImpl : public Application
     std::shared_ptr<WorkManager> mWorkManager;
     std::unique_ptr<PersistentState> mPersistentState;
     std::unique_ptr<LoadGenerator> mLoadGenerator;
+    std::unique_ptr<BanManager> mBanManager;
+    std::shared_ptr<NtpSynchronizationChecker> mNtpSynchronizationChecker;
+    std::unique_ptr<StatusManager> mStatusManager;
 
     std::vector<std::thread> mWorkerThreads;
 
@@ -138,8 +145,6 @@ class ApplicationImpl : public Application
     medida::Counter& mAppStateCurrent;
     medida::Timer& mAppStateChanges;
     VirtualClock::time_point mLastStateChange;
-
-    std::string mExtraStateInfo;
 
     Hash mNetworkID;
 

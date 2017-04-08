@@ -3,36 +3,37 @@
 // of this distribution or at http://www.apache.org/licenses/LICENSE-2.0
 
 #include "database/Database.h"
-#include "overlay/StellarXDR.h"
+#include "crypto/Hex.h"
 #include "main/Application.h"
 #include "main/Config.h"
+#include "overlay/StellarXDR.h"
+#include "util/GlobalChecks.h"
 #include "util/Logging.h"
+#include "util/Timer.h"
 #include "util/make_unique.h"
 #include "util/types.h"
-#include "util/GlobalChecks.h"
-#include "util/Timer.h"
-#include "crypto/Hex.h"
 
-#include "ledger/AccountFrame.h"
-#include "ledger/OfferFrame.h"
-#include "ledger/TrustFrame.h"
-#include "ledger/DataFrame.h"
-#include "overlay/OverlayManager.h"
-#include "main/PersistentState.h"
-#include "main/ExternalQueue.h"
-#include "ledger/LedgerHeaderFrame.h"
-#include "transactions/TransactionFrame.h"
 #include "bucket/BucketManager.h"
 #include "herder/Herder.h"
+#include "ledger/AccountFrame.h"
+#include "ledger/DataFrame.h"
+#include "ledger/LedgerHeaderFrame.h"
+#include "ledger/OfferFrame.h"
+#include "ledger/TrustFrame.h"
+#include "main/ExternalQueue.h"
+#include "main/PersistentState.h"
+#include "overlay/BanManager.h"
+#include "overlay/OverlayManager.h"
+#include "transactions/TransactionFrame.h"
 
+#include "medida/counter.h"
 #include "medida/metrics_registry.h"
 #include "medida/timer.h"
-#include "medida/counter.h"
 
-#include <stdexcept>
-#include <vector>
 #include <sstream>
+#include <stdexcept>
 #include <thread>
+#include <vector>
 
 extern "C" void register_factory_sqlite3();
 
@@ -51,7 +52,7 @@ using namespace std;
 
 bool Database::gDriversRegistered = false;
 
-static unsigned long const SCHEMA_VERSION = 3;
+static unsigned long const SCHEMA_VERSION = 5;
 
 static void
 setSerializable(soci::session& sess)
@@ -114,6 +115,26 @@ Database::applySchemaUpgrade(unsigned long vers)
 
     case 3:
         DataFrame::dropAll(*this);
+        break;
+
+    case 4:
+        BanManager::dropAll(*this);
+        mSession << "CREATE INDEX scpquorumsbyseq ON scpquorums(lastledgerseq)";
+        break;
+
+    case 5:
+        try
+        {
+            mSession << "ALTER TABLE accountdata ADD lastmodified INT NOT NULL "
+                        "DEFAULT 0;";
+        }
+        catch (soci::soci_error& e)
+        {
+            if (std::string(e.what()).find("lastmodified") == std::string::npos)
+            {
+                throw;
+            }
+        }
         break;
 
     default:

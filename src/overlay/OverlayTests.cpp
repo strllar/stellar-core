@@ -2,21 +2,24 @@
 // under the Apache License, Version 2.0. See the COPYING file at the root
 // of this distribution or at http://www.apache.org/licenses/LICENSE-2.0
 
-#include "main/Application.h"
-#include "overlay/LoopbackPeer.h"
-#include "util/make_unique.h"
-#include "main/test.h"
+#include "BanManager.h"
+#include "crypto/KeyUtils.h"
+#include "crypto/SecretKey.h"
 #include "lib/catch.hpp"
+#include "main/Application.h"
+#include "main/Config.h"
+#include "overlay/LoopbackPeer.h"
+#include "overlay/OverlayManagerImpl.h"
+#include "overlay/PeerRecord.h"
+#include "overlay/TCPPeer.h"
+#include "test/test.h"
 #include "util/Logging.h"
 #include "util/Timer.h"
-#include "crypto/SecretKey.h"
-#include "main/Config.h"
-#include "overlay/PeerRecord.h"
-#include "overlay/OverlayManagerImpl.h"
+#include "util/make_unique.h"
 
+#include "medida/meter.h"
 #include "medida/metrics_registry.h"
 #include "medida/timer.h"
-#include "medida/meter.h"
 
 using namespace stellar;
 
@@ -44,6 +47,39 @@ TEST_CASE("loopback peer hello", "[overlay]")
 
     REQUIRE(conn.getInitiator()->isAuthenticated());
     REQUIRE(conn.getAcceptor()->isAuthenticated());
+}
+
+TEST_CASE("loopback peer with 0 port", "[overlay]")
+{
+    VirtualClock clock;
+    auto const& cfg1 = getTestConfig(0);
+    auto cfg2 = getTestConfig(1);
+    cfg2.PEER_PORT = 0;
+
+    auto app1 = Application::create(clock, cfg1);
+    auto app2 = Application::create(clock, cfg2);
+
+    LoopbackPeerConnection conn(*app1, *app2);
+    crankSome(clock);
+
+    REQUIRE(!conn.getInitiator()->isAuthenticated());
+    REQUIRE(!conn.getAcceptor()->isAuthenticated());
+}
+
+TEST_CASE("loopback peer send auth before hello", "[overlay]")
+{
+    VirtualClock clock;
+    auto const& cfg1 = getTestConfig(0);
+    auto const& cfg2 = getTestConfig(1);
+    auto app1 = Application::create(clock, cfg1);
+    auto app2 = Application::create(clock, cfg2);
+
+    LoopbackPeerConnection conn(*app1, *app2);
+    conn.getInitiator()->sendAuth();
+    crankSome(clock);
+
+    REQUIRE(!conn.getInitiator()->isAuthenticated());
+    REQUIRE(!conn.getAcceptor()->isAuthenticated());
 }
 
 TEST_CASE("failed auth", "[overlay]")
@@ -94,7 +130,7 @@ TEST_CASE("accept preferred peer even when strict", "[overlay]")
 
     cfg2.PREFERRED_PEERS_ONLY = true;
     cfg2.PREFERRED_PEER_KEYS.push_back(
-        PubKeyUtils::toStrKey(cfg1.NODE_SEED.getPublicKey()));
+        KeyUtils::toStrKey(cfg1.NODE_SEED.getPublicKey()));
 
     auto app1 = Application::create(clock, cfg1);
     auto app2 = Application::create(clock, cfg2);
@@ -168,12 +204,31 @@ TEST_CASE("reject peers with invalid cert", "[overlay]")
                 .count() != 0);
 }
 
+TEST_CASE("reject banned peers", "[overlay]")
+{
+    VirtualClock clock;
+    Config const& cfg1 = getTestConfig(0);
+    Config cfg2 = getTestConfig(1);
+
+    auto app1 = Application::create(clock, cfg1);
+    auto app2 = Application::create(clock, cfg2);
+    app1->getBanManager().banNode(cfg2.NODE_SEED.getPublicKey());
+
+    LoopbackPeerConnection conn(*app1, *app2);
+    crankSome(clock);
+
+    REQUIRE(!conn.getInitiator()->isConnected());
+    REQUIRE(!conn.getAcceptor()->isConnected());
+    REQUIRE(app1->getMetrics()
+                .NewMeter({"overlay", "drop", "recv-hello-ban"}, "drop")
+                .count() != 0);
+}
+
 TEST_CASE("reject peers with incompatible overlay versions", "[overlay]")
 {
     Config const& cfg1 = getTestConfig(0);
 
-    auto doVersionCheck = [&](uint32 version)
-    {
+    auto doVersionCheck = [&](uint32 version) {
         VirtualClock clock;
         Config cfg2 = getTestConfig(1);
 
@@ -263,14 +318,12 @@ injectSendPeersAndReschedule(VirtualClock::time_point& end, VirtualClock& clock,
     if (clock.now() < end && sendPeer->isConnected())
     {
         timer.expires_from_now(std::chrono::milliseconds(10));
-        timer.async_wait([&](asio::error_code const& ec)
-                         {
-                             if (!ec)
-                             {
-                                 injectSendPeersAndReschedule(end, clock, timer,
-                                                              sendPeer);
-                             }
-                         });
+        timer.async_wait([&](asio::error_code const& ec) {
+            if (!ec)
+            {
+                injectSendPeersAndReschedule(end, clock, timer, sendPeer);
+            }
+        });
     }
 }
 

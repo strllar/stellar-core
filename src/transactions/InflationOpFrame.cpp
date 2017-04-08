@@ -6,10 +6,10 @@
 #include "ledger/AccountFrame.h"
 #include "ledger/LedgerDelta.h"
 #include "ledger/LedgerManager.h"
-#include "overlay/StellarXDR.h"
+#include "main/Application.h"
 #include "medida/meter.h"
 #include "medida/metrics_registry.h"
-#include "main/Application.h"
+#include "overlay/StellarXDR.h"
 
 const uint32_t INFLATION_FREQUENCY = (60 * 60 * 24 * 7); // every 7 days
 const uint32_t LAST_HIGH_RATE_INFLATION_SEQ = 229; //7% last for 229 weeks and happy new year.
@@ -44,7 +44,8 @@ InflationOpFrame::doApply(Application& app, LedgerDelta& delta,
     time_t inflationTime = (INFLATION_START_TIME + seq * INFLATION_FREQUENCY);
     if (closeTime < inflationTime)
     {
-        app.getMetrics().NewMeter({"op-inflation", "failure", "not-time"}, "operation")
+        app.getMetrics()
+            .NewMeter({"op-inflation", "failure", "not-time"}, "operation")
             .Mark();
         innerResult().code(INFLATION_NOT_TIME);
         return false;
@@ -61,14 +62,13 @@ InflationOpFrame::doApply(Application& app, LedgerDelta& delta,
 
     int64_t totalVotes = lcl.totalCoins;
     int64_t minBalance =
-        bigDivide(totalVotes, INFLATION_WIN_MIN_PERCENT, TRILLION);
+        bigDivide(totalVotes, INFLATION_WIN_MIN_PERCENT, TRILLION, ROUND_DOWN);
 
     std::vector<AccountFrame::InflationVotes> winners;
     auto& db = ledgerManager.getDatabase();
 
     AccountFrame::processForInflation(
-        [&](AccountFrame::InflationVotes const& votes)
-        {
+        [&](AccountFrame::InflationVotes const& votes) {
             if (votes.mVotes >= minBalance)
             {
                 winners.push_back(votes);
@@ -78,12 +78,11 @@ InflationOpFrame::doApply(Application& app, LedgerDelta& delta,
         },
         INFLATION_NUM_WINNERS, db);
 
-    int64 amountToDole =
-        bigDivide(lcl.totalCoins, INFLATION_RATE_TRILLIONTHS, TRILLION);
-
+    int64 amountToDole = bigDivide(lcl.totalCoins, INFLATION_RATE_TRILLIONTHS,
+                                   TRILLION, ROUND_DOWN);
     if (lcl.inflationSeq <= LAST_HIGH_RATE_INFLATION_SEQ) {
         amountToDole =
-                bigDivide(lcl.totalCoins, INFLATION_HIGHRATE_TRILLIONTHS, TRILLION);
+                bigDivide(lcl.totalCoins, INFLATION_HIGHRATE_TRILLIONTHS, TRILLION, ROUND_DOWN);
     }
 
     amountToDole += lcl.feePool;
@@ -101,7 +100,8 @@ InflationOpFrame::doApply(Application& app, LedgerDelta& delta,
     {
         AccountFrame::pointer winner;
 
-        int64 toDoleThisWinner = bigDivide(amountToDole, w.mVotes, totalVotes);
+        int64 toDoleThisWinner =
+            bigDivide(amountToDole, w.mVotes, totalVotes, ROUND_DOWN);
 
         if (toDoleThisWinner == 0)
             continue;
@@ -124,7 +124,9 @@ InflationOpFrame::doApply(Application& app, LedgerDelta& delta,
 
     inflationDelta.commit();
 
-    app.getMetrics().NewMeter({"op-inflation", "success", "apply"}, "operation").Mark();
+    app.getMetrics()
+        .NewMeter({"op-inflation", "success", "apply"}, "operation")
+        .Mark();
     return true;
 }
 

@@ -34,8 +34,24 @@ bool exists(std::string const& path);
 // Delete a path and everything inside it (if a dir)
 void deltree(std::string const& path);
 
-// Make a single dir; not mkdir-p, i.e. non-recursive
+// Make a single dir; not mkdir -p, i.e. non-recursive
 bool mkdir(std::string const& path);
+
+// Make a dir path like mkdir -p, i.e. recursive, uses '/' as dir separator
+bool mkpath(std::string const& path);
+
+class PathSplitter
+{
+  public:
+    explicit PathSplitter(std::string path);
+
+    std::string next();
+    bool hasNext() const;
+
+  private:
+    std::string mPath;
+    std::string::size_type mPos;
+};
 
 ////
 // Utility functions for constructing path names

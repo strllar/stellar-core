@@ -6,13 +6,13 @@
 
 #include <algorithm>
 
-#include "xdrpp/marshal.h"
+#include "crypto/Hex.h"
 #include "crypto/SHA.h"
 #include "scp/LocalNode.h"
 #include "scp/Slot.h"
-#include "util/Logging.h"
-#include "crypto/Hex.h"
 #include "util/GlobalChecks.h"
+#include "util/Logging.h"
+#include "xdrpp/marshal.h"
 
 namespace stellar
 {
@@ -38,13 +38,6 @@ SCP::receiveEnvelope(SCPEnvelope const& envelope)
 
     uint64 slotIndex = envelope.statement.slotIndex;
     return getSlot(slotIndex, true)->processEnvelope(envelope, false);
-}
-
-bool
-SCP::abandonBallot(uint64 slotIndex)
-{
-    dbgAssert(isValidator());
-    return getSlot(slotIndex, true)->abandonBallot();
 }
 
 bool

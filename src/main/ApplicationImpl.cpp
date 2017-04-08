@@ -9,29 +9,33 @@
 // first to include <windows.h> -- so we try to include it before everything
 // else.
 #include "util/asio.h"
-#include "ledger/LedgerManager.h"
-#include "herder/Herder.h"
-#include "overlay/OverlayManager.h"
 #include "bucket/Bucket.h"
 #include "bucket/BucketManager.h"
-#include "history/HistoryManager.h"
-#include "database/Database.h"
-#include "process/ProcessManager.h"
-#include "main/CommandHandler.h"
-#include "work/WorkManager.h"
-#include "simulation/LoadGenerator.h"
-#include "crypto/SecretKey.h"
 #include "crypto/SHA.h"
-#include "scp/LocalNode.h"
+#include "crypto/SecretKey.h"
+#include "database/Database.h"
+#include "herder/Herder.h"
+#include "history/HistoryManager.h"
+#include "ledger/LedgerManager.h"
+#include "main/CommandHandler.h"
 #include "main/ExternalQueue.h"
+#include "main/NtpSynchronizationChecker.h"
+#include "medida/counter.h"
+#include "medida/meter.h"
 #include "medida/metrics_registry.h"
 #include "medida/reporting/console_reporter.h"
-#include "medida/meter.h"
-#include "medida/counter.h"
 #include "medida/timer.h"
+#include "overlay/BanManager.h"
+#include "overlay/OverlayManager.h"
+#include "process/ProcessManager.h"
+#include "scp/LocalNode.h"
+#include "scp/QuorumSetUtils.h"
+#include "simulation/LoadGenerator.h"
+#include "util/StatusManager.h"
+#include "work/WorkManager.h"
 
-#include "util/TmpDir.h"
 #include "util/Logging.h"
+#include "util/TmpDir.h"
 #include "util/make_unique.h"
 
 #include <set>
@@ -70,22 +74,20 @@ ApplicationImpl::ApplicationImpl(VirtualClock& clock, Config const& cfg)
     unsigned t = std::thread::hardware_concurrency();
     LOG(DEBUG) << "Application constructing "
                << "(worker threads: " << t << ")";
-    mStopSignals.async_wait([this](asio::error_code const& ec, int sig)
-                            {
-                                if (!ec)
-                                {
-                                    LOG(INFO) << "got signal " << sig
-                                              << ", shutting down";
-                                    this->gracefulStop();
-                                }
-                            });
+    mStopSignals.async_wait([this](asio::error_code const& ec, int sig) {
+        if (!ec)
+        {
+            LOG(INFO) << "got signal " << sig << ", shutting down";
+            this->gracefulStop();
+        }
+    });
 
     // These must be constructed _after_ because they frequently call back
     // into App.getFoo() to get information / start up.
     mDatabase = make_unique<Database>(*this);
     mPersistentState = make_unique<PersistentState>(*this);
 
-    mTmpDirManager = make_unique<TmpDirManager>(cfg.TMP_DIR_PATH);
+    mTmpDirManager = make_unique<TmpDirManager>(cfg.BUCKET_DIR_PATH + "/tmp");
     mOverlayManager = OverlayManager::create(*this);
     mLedgerManager = LedgerManager::create(*this);
     mHerder = Herder::create(*this);
@@ -94,13 +96,18 @@ ApplicationImpl::ApplicationImpl(VirtualClock& clock, Config const& cfg)
     mProcessManager = ProcessManager::create(*this);
     mCommandHandler = make_unique<CommandHandler>(*this);
     mWorkManager = WorkManager::create(*this);
+    mBanManager = BanManager::create(*this);
+    mStatusManager = make_unique<StatusManager>();
+
+    if (!cfg.NTP_SERVER.empty())
+    {
+        mNtpSynchronizationChecker =
+            std::make_shared<NtpSynchronizationChecker>(*this, cfg.NTP_SERVER);
+    }
 
     while (t--)
     {
-        mWorkerThreads.emplace_back([this, t]()
-                                    {
-                                        this->runWorkerThread(t);
-                                    });
+        mWorkerThreads.emplace_back([this, t]() { this->runWorkerThread(t); });
     }
 
     LOG(DEBUG) << "Application constructed";
@@ -110,6 +117,7 @@ void
 ApplicationImpl::newDB()
 {
     mDatabase->initialize();
+    mDatabase->upgradeToCurrentSchema();
 
     LOG(INFO) << "* ";
     LOG(INFO) << "* The database has been initialized";
@@ -195,6 +203,10 @@ ApplicationImpl::getNetworkID() const
 ApplicationImpl::~ApplicationImpl()
 {
     LOG(INFO) << "Application destructing";
+    if (mNtpSynchronizationChecker)
+    {
+        mNtpSynchronizationChecker->shutdown();
+    }
     if (mProcessManager)
     {
         mProcessManager->shutdown();
@@ -230,7 +242,7 @@ ApplicationImpl::start()
     {
         throw std::invalid_argument("Quorum not configured");
     }
-    if (!mHerder->isQuorumSetSane(mConfig.QUORUM_SET, !mConfig.UNSAFE_QUORUM))
+    if (!isQuorumSetSane(mConfig.QUORUM_SET, !mConfig.UNSAFE_QUORUM))
     {
         std::string err("Invalid QUORUM_SET: duplicate entry or bad threshold "
                         "(should be between ");
@@ -248,11 +260,11 @@ ApplicationImpl::start()
 
     bool done = false;
     mLedgerManager->loadLastKnownLedger(
-        [this, &done](asio::error_code const& ec)
-        {
+        [this, &done](asio::error_code const& ec) {
             if (ec)
             {
-                throw std::runtime_error("Unable to restore last-known ledger state");
+                throw std::runtime_error(
+                    "Unable to restore last-known ledger state");
             }
 
             // restores the SCP state before starting overlay
@@ -291,6 +303,11 @@ ApplicationImpl::start()
             done = true;
         });
 
+    if (mNtpSynchronizationChecker)
+    {
+        mNtpSynchronizationChecker->start();
+    }
+
     while (!done)
     {
         mVirtualClock.crank(true);
@@ -314,6 +331,10 @@ ApplicationImpl::gracefulStop()
     if (mOverlayManager)
     {
         mOverlayManager->shutdown();
+    }
+    if (mNtpSynchronizationChecker)
+    {
+        mNtpSynchronizationChecker->shutdown();
     }
     if (mProcessManager)
     {
@@ -391,13 +412,11 @@ ApplicationImpl::getLoadGenerator()
 void
 ApplicationImpl::checkDB()
 {
-    getClock().getIOService().post(
-        [this]
-        {
-            checkDBAgainstBuckets(this->getMetrics(), this->getBucketManager(),
-                                  this->getDatabase(),
-                                  this->getBucketManager().getBucketList());
-        });
+    getClock().getIOService().post([this] {
+        checkDBAgainstBuckets(this->getMetrics(), this->getBucketManager(),
+                              this->getDatabase(),
+                              this->getBucketManager().getBucketList());
+    });
 }
 
 void
@@ -464,18 +483,6 @@ ApplicationImpl::getStateHuman() const
     return std::string(stateStrings[getState()]);
 }
 
-std::string
-ApplicationImpl::getExtraStateInfo() const
-{
-    return std::string(mExtraStateInfo);
-}
-
-void
-ApplicationImpl::setExtraStateInfo(std::string const& stateStr)
-{
-    mExtraStateInfo = stateStr;
-}
-
 bool
 ApplicationImpl::isStopping() const
 {
@@ -520,8 +527,8 @@ ApplicationImpl::syncOwnMetrics()
         .Mark(vhit + vmiss + vignore);
 
     // Similarly, flush global process-table stats.
-    mMetrics->NewCounter({"process", "memory", "handles"}).set_count(
-        mProcessManager->getNumRunningProcesses());
+    mMetrics->NewCounter({"process", "memory", "handles"})
+        .set_count(mProcessManager->getNumRunningProcesses());
 }
 
 void
@@ -596,6 +603,18 @@ WorkManager&
 ApplicationImpl::getWorkManager()
 {
     return *mWorkManager;
+}
+
+BanManager&
+ApplicationImpl::getBanManager()
+{
+    return *mBanManager;
+}
+
+StatusManager&
+ApplicationImpl::getStatusManager()
+{
+    return *mStatusManager;
 }
 
 asio::io_service&

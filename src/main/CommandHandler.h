@@ -4,8 +4,8 @@
 // under the Apache License, Version 2.0. See the COPYING file at the root
 // of this distribution or at http://www.apache.org/licenses/LICENSE-2.0
 
-#include <string>
 #include "lib/http/server.hpp"
+#include <string>
 
 /*
 handler functions for the http commands this server supports
@@ -28,11 +28,13 @@ class CommandHandler
 
     void fileNotFound(std::string const& params, std::string& retStr);
 
+    void bans(std::string const& params, std::string& retStr);
     void catchup(std::string const& params, std::string& retStr);
     void checkpoint(std::string const& params, std::string& retStr);
     void checkdb(std::string const& params, std::string& retStr);
     void connect(std::string const& params, std::string& retStr);
     void dropcursor(std::string const& params, std::string& retStr);
+    void dropPeer(std::string const& params, std::string& retStr);
     void generateLoad(std::string const& params, std::string& retStr);
     void info(std::string const& params, std::string& retStr);
     void ll(std::string const& params, std::string& retStr);
@@ -47,5 +49,6 @@ class CommandHandler
     void tx(std::string const& params, std::string& retStr);
     void testAcc(std::string const& params, std::string& retStr);
     void testTx(std::string const& params, std::string& retStr);
+    void unban(std::string const& params, std::string& retStr);
 };
 }

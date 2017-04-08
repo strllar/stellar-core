@@ -4,16 +4,16 @@
 // under the Apache License, Version 2.0. See the COPYING file at the root
 // of this distribution or at http://www.apache.org/licenses/LICENSE-2.0
 
-#include <map>
-#include <set>
-#include <memory>
-#include <functional>
 #include <chrono>
+#include <functional>
+#include <map>
+#include <memory>
+#include <set>
 
 #include "crypto/SecretKey.h"
-#include "xdr/Stellar-SCP.h"
 #include "lib/json/json-forwards.h"
 #include "scp/SCPDriver.h"
+#include "xdr/Stellar-SCP.h"
 
 namespace stellar
 {
@@ -58,10 +58,6 @@ class SCP
     // it processes the envelope, updates the internal state and
     // invokes the appropriate methods
     EnvelopeState receiveEnvelope(SCPEnvelope const& envelope);
-
-    // request to trigger a 'bumpState'
-    // returns the value returned by 'bumpState'
-    bool abandonBallot(uint64 slotIndex);
 
     // Submit a value to consider for slotIndex
     // previousValue is the value from slotIndex-1

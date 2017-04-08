@@ -3,8 +3,8 @@
 // under the Apache License, Version 2.0. See the COPYING file at the root
 // of this distribution or at http://www.apache.org/licenses/LICENSE-2.0
 
-#include <string>
 #include "ByteSlice.h"
+#include <string>
 
 namespace stellar
 {
@@ -12,11 +12,13 @@ namespace stellar
 namespace strKey
 {
 
-typedef enum
-{
+typedef enum {
+    // version bytes - 5 bits only
     // version bytes - 5 bits only for leading letter, 3 bits for following group
     STRKEY_PUBKEY_ED25519 = (13<<3) + 0, // 'N' + [ABCD]
-    STRKEY_SEED_ED25519 = (23<<3) + 6  // 'X' + [YZ23]
+    STRKEY_SEED_ED25519 = (23<<3) + 6,  // 'X' + [YZ23]
+    STRKEY_PRE_AUTH_TX = (19<<3),   // 'T',
+    STRKEY_HASH_X = (7<<3)         // 'N'
 } StrKeyVersionByte;
 
 // Encode a version byte and ByteSlice into StrKey

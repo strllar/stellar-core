@@ -4,12 +4,15 @@
 // of this distribution or at http://www.apache.org/licenses/LICENSE-2.0
 
 #include "main/Config.h"
-#include "history/HistoryArchive.h"
 #include "StellarCoreVersion.h"
+#include "crypto/Hex.h"
+#include "crypto/KeyUtils.h"
+#include "history/HistoryArchive.h"
+#include "scp/LocalNode.h"
 #include "util/Logging.h"
 #include "util/types.h"
-#include "crypto/Hex.h"
-#include "scp/LocalNode.h"
+
+#include <functional>
 #include <sstream>
 
 namespace stellar
@@ -22,7 +25,7 @@ Config::Config() : NODE_SEED(SecretKey::random())
 
     // non configurable
     FORCE_SCP = false;
-    LEDGER_PROTOCOL_VERSION = 2;
+    LEDGER_PROTOCOL_VERSION = 5;
 
     OVERLAY_PROTOCOL_MIN_VERSION = 5;
     OVERLAY_PROTOCOL_VERSION = 5;
@@ -45,8 +48,7 @@ Config::Config() : NODE_SEED(SecretKey::random())
     FAILURE_SAFETY = -1;
     UNSAFE_QUORUM = false;
 
-    LOG_FILE_PATH = "stellar-core.log";
-    TMP_DIR_PATH = "tmp";
+    LOG_FILE_PATH = "stellar-core.%datetime{%Y.%M.%d-%H:%m:%s}.log";
     BUCKET_DIR_PATH = "buckets";
 
     DESIRED_BASE_FEE = 100;
@@ -67,6 +69,7 @@ Config::Config() : NODE_SEED(SecretKey::random())
     NODE_IS_VALIDATOR = false;
 
     DATABASE = "sqlite3://:memory:";
+    NTP_SERVER = "pool.ntp.org";
 }
 
 void
@@ -358,11 +361,9 @@ Config::load(std::string const& filename)
             }
             else if (item.first == "TMP_DIR_PATH")
             {
-                if (!item.second->as<std::string>())
-                {
-                    throw std::invalid_argument("invalid TMP_DIR_PATH");
-                }
-                TMP_DIR_PATH = item.second->as<std::string>()->value();
+                throw std::invalid_argument("TMP_DIR_PATH is not supported "
+                                            "anymore - tmp data is now kept in "
+                                            "BUCKET_DIR_PATH/tmp");
             }
             else if (item.first == "BUCKET_DIR_PATH")
             {
@@ -587,6 +588,24 @@ Config::load(std::string const& filename)
                 }
                 NETWORK_PASSPHRASE = item.second->as<std::string>()->value();
             }
+            else if (item.first == "NTP_SERVER")
+            {
+                if (!item.second->as<std::string>())
+                {
+                    throw std::invalid_argument("invalid NTP_SERVER");
+                }
+                NTP_SERVER = item.second->as<std::string>()->value();
+            }
+            else if (item.first == "PREFERRED_UPGRADE_DATETIME")
+            {
+                if (!item.second->as<std::tm>())
+                {
+                    throw std::invalid_argument(
+                        "invalid PREFERRED_UPGRADE_DATETIME");
+                }
+                PREFERRED_UPGRADE_DATETIME =
+                    make_optional<std::tm>(item.second->as<std::tm>()->value());
+            }
             else
             {
                 std::string err("Unknown configuration entry: '");
@@ -615,8 +634,7 @@ Config::load(std::string const& filename)
                     }
                     PublicKey nodeID;
                     parseNodeID(v->as<std::string>()->value(), nodeID);
-                    PREFERRED_PEER_KEYS.push_back(
-                        PubKeyUtils::toStrKey(nodeID));
+                    PREFERRED_PEER_KEYS.push_back(KeyUtils::toStrKey(nodeID));
                 }
             }
         }
@@ -645,10 +663,8 @@ void
 Config::validateConfig()
 {
     std::set<NodeID> nodes;
-    LocalNode::forAllNodes(QUORUM_SET, [&](NodeID const& n)
-                           {
-                               nodes.insert(n);
-                           });
+    LocalNode::forAllNodes(QUORUM_SET,
+                           [&](NodeID const& n) { nodes.insert(n); });
 
     if (nodes.size() == 0)
     {
@@ -752,7 +768,7 @@ Config::parseNodeID(std::string configStr, PublicKey& retKey, SecretKey& sKey,
         }
         else
         {
-            retKey = PubKeyUtils::fromStrKey(nodestr);
+            retKey = KeyUtils::fromStrKey<PublicKey>(nodestr);
         }
 
         if (iss)
@@ -768,8 +784,9 @@ Config::parseNodeID(std::string configStr, PublicKey& retKey, SecretKey& sKey,
                     throw std::invalid_argument("name already used");
                 }
 
-                if (!VALIDATOR_NAMES.emplace(std::make_pair(nodestr,
-                                                            commonName)).second)
+                if (!VALIDATOR_NAMES
+                         .emplace(std::make_pair(nodestr, commonName))
+                         .second)
                 {
                     std::stringstream msg;
                     msg << "naming node twice: " << commonName;
@@ -783,7 +800,7 @@ Config::parseNodeID(std::string configStr, PublicKey& retKey, SecretKey& sKey,
 std::string
 Config::toShortString(PublicKey const& pk) const
 {
-    std::string ret = PubKeyUtils::toStrKey(pk);
+    std::string ret = KeyUtils::toStrKey(pk);
     auto it = VALIDATOR_NAMES.find(ret);
     if (it == VALIDATOR_NAMES.end())
         return ret.substr(0, 5);
@@ -794,7 +811,7 @@ Config::toShortString(PublicKey const& pk) const
 std::string
 Config::toStrKey(PublicKey const& pk, bool& isAlias) const
 {
-    std::string ret = PubKeyUtils::toStrKey(pk);
+    std::string ret = KeyUtils::toStrKey(pk);
     auto it = VALIDATOR_NAMES.find(ret);
     if (it == VALIDATOR_NAMES.end())
     {
@@ -818,41 +835,57 @@ Config::toStrKey(PublicKey const& pk) const
 bool
 Config::resolveNodeID(std::string const& s, PublicKey& retKey) const
 {
-    if (s.size() > 1)
+    auto expanded = expandNodeID(s);
+    if (expanded.empty())
     {
-        std::string arg = s.substr(1);
-        auto it = VALIDATOR_NAMES.end();
-        if (s[0] == '$')
-        {
-            it = std::find_if(VALIDATOR_NAMES.begin(), VALIDATOR_NAMES.end(),
-                              [&](std::pair<std::string, std::string> const& p)
-                              {
-                                  return p.second == arg;
-                              });
-        }
-        else if (s[0] == '@')
-        {
-            it = std::find_if(VALIDATOR_NAMES.begin(), VALIDATOR_NAMES.end(),
-                              [&](std::pair<std::string, std::string> const& p)
-                              {
-                                  return p.first.compare(0, arg.size(), arg) ==
-                                         0;
-                              });
-        }
+        return false;
+    }
 
-        if (it == VALIDATOR_NAMES.end())
-        {
-            return false;
-        }
-        else
-        {
-            retKey = PubKeyUtils::fromStrKey(it->first);
-        }
+    try
+    {
+        retKey = KeyUtils::fromStrKey<PublicKey>(expanded);
+    }
+    catch (std::invalid_argument&)
+    {
+        return false;
+    }
+    return true;
+}
+
+std::string
+Config::expandNodeID(const std::string& s) const
+{
+    if (s.length() < 2)
+    {
+        return s;
+    }
+    if (s[0] != '$' && s[0] != '@')
+    {
+        return s;
+    }
+
+    using validatorMatcher_t =
+        std::function<bool(std::pair<std::string, std::string> const&)>;
+    auto arg = s.substr(1);
+    auto validatorMatcher =
+        s[0] == '$' ? validatorMatcher_t{[&](
+                          std::pair<std::string, std::string> const& p) {
+            return p.second == arg;
+        }}
+                    : validatorMatcher_t{
+                          [&](std::pair<std::string, std::string> const& p) {
+                              return p.first.compare(0, arg.size(), arg) == 0;
+                          }};
+
+    auto it = std::find_if(VALIDATOR_NAMES.begin(), VALIDATOR_NAMES.end(),
+                           validatorMatcher);
+    if (it != VALIDATOR_NAMES.end())
+    {
+        return it->first;
     }
     else
     {
-        retKey = PubKeyUtils::fromStrKey(s);
+        return {};
     }
-    return true;
 }
 }

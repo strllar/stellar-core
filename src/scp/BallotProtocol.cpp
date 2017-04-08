@@ -4,17 +4,18 @@
 
 #include "BallotProtocol.h"
 
-#include <functional>
-#include "util/types.h"
-#include "xdrpp/marshal.h"
+#include "Slot.h"
 #include "crypto/Hex.h"
 #include "crypto/SHA.h"
-#include "util/Logging.h"
-#include "scp/LocalNode.h"
 #include "lib/json/json.h"
-#include "util/make_unique.h"
+#include "scp/LocalNode.h"
+#include "scp/QuorumSetUtils.h"
 #include "util/GlobalChecks.h"
-#include "Slot.h"
+#include "util/Logging.h"
+#include "util/make_unique.h"
+#include "util/types.h"
+#include "xdrpp/marshal.h"
+#include <functional>
 
 namespace stellar
 {
@@ -218,13 +219,7 @@ BallotProtocol::processEnvelope(SCPEnvelope const& envelope, bool self)
 bool
 BallotProtocol::isStatementSane(SCPStatement const& st, bool self)
 {
-    bool res = mSlot.getLocalNode()->isQuorumSetSane(
-        *mSlot.getQuorumSetFromStatement(st), false);
-    if (!res)
-    {
-        CLOG(DEBUG, "SCP") << "Invalid quorum set received";
-        return false;
-    }
+    auto res = true;
 
     switch (st.pledges.type())
     {
@@ -461,10 +456,8 @@ BallotProtocol::startBallotProtocolTimer()
 
     std::shared_ptr<Slot> slot = mSlot.shared_from_this();
     mSlot.getSCPDriver().setupTimer(
-        mSlot.getSlotIndex(), Slot::BALLOT_PROTOCOL_TIMER, timeout, [slot]()
-        {
-            slot->getBallotProtocol().ballotProtocolTimerExpired();
-        });
+        mSlot.getSlotIndex(), Slot::BALLOT_PROTOCOL_TIMER, timeout,
+        [slot]() { slot->getBallotProtocol().ballotProtocolTimerExpired(); });
 }
 
 void
@@ -791,8 +784,7 @@ BallotProtocol::attemptPreparedAccept(SCPStatement const& hint)
 
         bool accepted = federatedAccept(
             // checks if any node is voting for this ballot
-            [&ballot, this](SCPStatement const& st)
-            {
+            [&ballot, this](SCPStatement const& st) {
                 bool res;
 
                 switch (st.pledges.type())
@@ -1154,11 +1146,9 @@ BallotProtocol::attemptAcceptCommit(SCPStatement const& hint)
         }
     }
 
-    auto pred = [&ballot, this](Interval const& cur) -> bool
-    {
+    auto pred = [&ballot, this](Interval const& cur) -> bool {
         return federatedAccept(
-            [&](SCPStatement const& st) -> bool
-            {
+            [&](SCPStatement const& st) -> bool {
                 bool res = false;
                 auto const& pl = st.pledges;
                 switch (pl.type())
@@ -1323,8 +1313,7 @@ BallotProtocol::attemptBump()
 
             bool vBlocking = LocalNode::isVBlocking(
                 getLocalNode()->getQuorumSet(), mLatestEnvelopes,
-                [&](SCPStatement const& st)
-                {
+                [&](SCPStatement const& st) {
                     bool res;
                     auto const& pl = st.pledges;
                     if (pl.type() == SCP_ST_PREPARE)
@@ -1415,8 +1404,7 @@ BallotProtocol::attemptConfirmCommit(SCPStatement const& hint)
     std::set<uint32> boundaries = getCommitBoundariesFromStatements(ballot);
     Interval candidate;
 
-    auto pred = [&ballot, this](Interval const& cur) -> bool
-    {
+    auto pred = [&ballot, this](Interval const& cur) -> bool {
         return federatedRatify(
             std::bind(&BallotProtocol::commitPredicate, ballot, cur, _1));
     };
@@ -1767,8 +1755,8 @@ BallotProtocol::advanceSlot(SCPStatement const& hint)
 {
     mCurrentMessageLevel++;
     if (Logging::logDebug("SCP"))
-        CLOG(DEBUG, "SCP") << "BallotProtocol::advanceSlot " << mCurrentMessageLevel
-                           << " " << getLocalState();
+        CLOG(DEBUG, "SCP") << "BallotProtocol::advanceSlot "
+                           << mCurrentMessageLevel << " " << getLocalState();
 
     if (mCurrentMessageLevel >= MAX_ADVANCE_SLOT_RECURSION)
     {
@@ -1785,8 +1773,7 @@ BallotProtocol::advanceSlot(SCPStatement const& hint)
         if (LocalNode::isQuorum(
                 getLocalNode()->getQuorumSet(), mLatestEnvelopes,
                 std::bind(&Slot::getQuorumSetFromStatement, &mSlot, _1),
-                [&](SCPStatement const& st)
-                {
+                [&](SCPStatement const& st) {
                     bool res;
                     if (st.pledges.type() == SCP_ST_PREPARE)
                     {
@@ -1836,8 +1823,9 @@ BallotProtocol::advanceSlot(SCPStatement const& hint)
     }
 
     if (Logging::logDebug("SCP"))
-        CLOG(DEBUG, "SCP") << "BallotProtocol::advanceSlot " << mCurrentMessageLevel
-                           << " - exiting " << getLocalState();
+        CLOG(DEBUG, "SCP") << "BallotProtocol::advanceSlot "
+                           << mCurrentMessageLevel << " - exiting "
+                           << getLocalState();
 
     --mCurrentMessageLevel;
 
@@ -1873,6 +1861,9 @@ BallotProtocol::validateValues(SCPStatement const& st)
     case SCPStatementType::SCP_ST_EXTERNALIZE:
         values.insert(st.pledges.externalize().commit.value);
         break;
+    default:
+        // This shouldn't happen
+        return SCPDriver::kInvalidValue;
     }
     SCPDriver::ValidationLevel res = SCPDriver::kFullyValidatedValue;
     for (auto const& v : values)
@@ -1977,32 +1968,30 @@ BallotProtocol::dumpQuorumInfo(Json::Value& ret, NodeID const& id, bool summary)
         phase = "expired";
         return;
     }
-    LocalNode::forAllNodes(
-        *qSet, [&](NodeID const& n)
+    LocalNode::forAllNodes(*qSet, [&](NodeID const& n) {
+        auto it = mLatestEnvelopes.find(n);
+        if (it == mLatestEnvelopes.end())
         {
-            auto it = mLatestEnvelopes.find(n);
-            if (it == mLatestEnvelopes.end())
+            if (!summary)
             {
-                if (!summary)
-                {
-                    missing.append(mSlot.getSCPDriver().toShortString(n));
-                }
-                n_missing++;
+                missing.append(mSlot.getSCPDriver().toShortString(n));
             }
-            else if (areBallotsCompatible(
-                         getWorkingBallot(it->second.statement), b))
+            n_missing++;
+        }
+        else if (areBallotsCompatible(getWorkingBallot(it->second.statement),
+                                      b))
+        {
+            agree++;
+        }
+        else
+        {
+            if (!summary)
             {
-                agree++;
+                disagree.append(mSlot.getSCPDriver().toShortString(n));
             }
-            else
-            {
-                if (!summary)
-                {
-                    disagree.append(mSlot.getSCPDriver().toShortString(n));
-                }
-                n_disagree++;
-            }
-        });
+            n_disagree++;
+        }
+    });
     if (summary)
     {
         missing = n_missing;
@@ -2010,8 +1999,7 @@ BallotProtocol::dumpQuorumInfo(Json::Value& ret, NodeID const& id, bool summary)
     }
 
     auto f = LocalNode::findClosestVBlocking(*qSet, mLatestEnvelopes,
-                                             [&](SCPStatement const& st)
-                                             {
+                                             [&](SCPStatement const& st) {
                                                  return areBallotsCompatible(
                                                      getWorkingBallot(st), b);
                                              },

@@ -3,12 +3,13 @@
 // under the Apache License, Version 2.0. See the COPYING file at the root
 // of this distribution or at http://www.apache.org/licenses/LICENSE-2.0
 
-#include "overlay/StellarXDR.h"
-#include <string>
-#include <memory>
-#include <map>
 #include "crypto/SecretKey.h"
 #include "lib/util/cpptoml.h"
+#include "overlay/StellarXDR.h"
+#include "util/optional.h"
+#include <map>
+#include <memory>
+#include <string>
 
 #define DEFAULT_PEER_PORT 12625
 
@@ -25,6 +26,8 @@ class Config : public std::enable_shared_from_this<Config>
     void parseNodeID(std::string configStr, PublicKey& retKey);
     void parseNodeID(std::string configStr, PublicKey& retKey, SecretKey& sKey,
                      bool isSeed);
+
+    std::string expandNodeID(std::string const& s) const;
 
   public:
     typedef std::shared_ptr<Config> pointer;
@@ -112,6 +115,7 @@ class Config : public std::enable_shared_from_this<Config>
     bool UNSAFE_QUORUM;
 
     uint32_t LEDGER_PROTOCOL_VERSION;
+    optional<std::tm> PREFERRED_UPGRADE_DATETIME;
 
     // note: all versions in the range
     // [OVERLAY_PROTOCOL_MIN_VERSION, OVERLAY_PROTOCOL_VERSION] must be handled
@@ -119,14 +123,13 @@ class Config : public std::enable_shared_from_this<Config>
     uint32_t OVERLAY_PROTOCOL_VERSION;     // max overlay version understood
     std::string VERSION_STR;
     std::string LOG_FILE_PATH;
-    std::string TMP_DIR_PATH;
     std::string BUCKET_DIR_PATH;
     uint32_t DESIRED_BASE_FEE;     // in stroops
     uint32_t DESIRED_BASE_RESERVE; // in stroops
     uint32_t DESIRED_MAX_TX_PER_LEDGER;
-    unsigned short HTTP_PORT;       // what port to listen for commands
-    bool PUBLIC_HTTP_PORT;          // if you accept commands from not localhost
-    int HTTP_MAX_CLIENT;  // maximum number of http clients, i.e backlog
+    unsigned short HTTP_PORT; // what port to listen for commands
+    bool PUBLIC_HTTP_PORT;    // if you accept commands from not localhost
+    int HTTP_MAX_CLIENT;      // maximum number of http clients, i.e backlog
     std::string NETWORK_PASSPHRASE; // identifier for the network
 
     // overlay config
@@ -174,6 +177,8 @@ class Config : public std::enable_shared_from_this<Config>
 
     std::vector<std::string> COMMANDS;
     std::vector<std::string> REPORT_METRICS;
+
+    std::string NTP_SERVER; // ntp server used to check if time is valid on host
 
     Config();
 

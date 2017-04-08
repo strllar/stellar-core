@@ -2,11 +2,12 @@
 // under the Apache License, Version 2.0. See the COPYING file at the root
 // of this distribution or at http://www.apache.org/licenses/LICENSE-2.0
 
-#include "util/Logging.h"
+#include "util/Fs.h"
 #include "crypto/Hex.h"
 #include "lib/util/format.h"
-#include <regex>
+#include "util/Logging.h"
 #include <map>
+#include <regex>
 
 #ifdef _WIN32
 #include <direct.h>
@@ -23,8 +24,8 @@ namespace fs
 {
 
 #ifdef _WIN32
-#include <Windows.h>
 #include <Shellapi.h>
+#include <Windows.h>
 #include <psapi.h>
 
 static std::map<std::string, HANDLE> lockMap;
@@ -72,7 +73,8 @@ exists(std::string const& name)
 
     if (GetFileAttributes(name.c_str()) == INVALID_FILE_ATTRIBUTES)
     {
-        if (GetLastError() == ERROR_FILE_NOT_FOUND)
+        if (GetLastError() == ERROR_FILE_NOT_FOUND ||
+            GetLastError() == ERROR_PATH_NOT_FOUND)
         {
             return false;
         }
@@ -139,13 +141,13 @@ processExists(long pid)
 }
 
 #else
-#include <ftw.h>
-#include <unistd.h>
-#include <sys/stat.h>
-#include <sys/file.h>
-#include <sys/types.h>
-#include <fcntl.h>
 #include <cerrno>
+#include <fcntl.h>
+#include <ftw.h>
+#include <sys/file.h>
+#include <sys/stat.h>
+#include <sys/types.h>
+#include <unistd.h>
 
 static std::map<std::string, int> lockMap;
 
@@ -217,33 +219,40 @@ mkdir(std::string const& name)
     return b;
 }
 
+namespace
+{
+
 int
-callback(char const* name, struct stat const* st, int flag, struct FTW* ftw)
+nftw_deltree_callback(char const* name, struct stat const* st, int flag,
+                      struct FTW* ftw)
 {
     CLOG(DEBUG, "Fs") << "deleting: " << name;
     if (flag == FTW_DP)
     {
         if (rmdir(name) != 0)
         {
-            throw std::runtime_error("rmdir failed");
+            throw std::runtime_error(std::string{"rmdir of "} + name +
+                                     " failed");
         }
     }
     else
     {
         if (std::remove(name) != 0)
         {
-            throw std::runtime_error("std::remove failed");
+            throw std::runtime_error(std::string{"std::remove of "} + name +
+                                     " failed");
         }
     }
     return 0;
+}
 }
 
 void
 deltree(std::string const& d)
 {
-    if (nftw(d.c_str(), callback, FOPEN_MAX, FTW_DEPTH) != 0)
+    if (nftw(d.c_str(), nftw_deltree_callback, FOPEN_MAX, FTW_DEPTH) != 0)
     {
-        throw std::runtime_error("nftw failed in deltree");
+        throw std::runtime_error("nftw failed in deltree for " + d);
     }
 }
 
@@ -260,6 +269,47 @@ processExists(long pid)
 }
 
 #endif
+
+PathSplitter::PathSplitter(std::string path) : mPath{std::move(path)}, mPos{0}
+{
+}
+
+std::string
+PathSplitter::next()
+{
+    auto slash = mPath.find('/', mPos);
+    mPos = slash == std::string::npos ? mPath.length() : slash;
+    auto r = mPos == 0 ? "/" : mPath.substr(0, mPos);
+    mPos++;
+    auto mLastSlash = mPos;
+    while (mLastSlash < mPath.length() && mPath[mLastSlash] == '/')
+        mLastSlash++;
+    if (mLastSlash > mPos)
+        mPath.erase(mPos, mLastSlash - mPos);
+    return r;
+}
+
+bool
+PathSplitter::hasNext() const
+{
+    return mPos < mPath.length();
+}
+
+bool
+mkpath(const std::string& path)
+{
+    auto splitter = PathSplitter{path};
+    while (splitter.hasNext())
+    {
+        auto subpath = splitter.next();
+        if (!exists(subpath) && !mkdir(subpath))
+        {
+            return false;
+        }
+    }
+
+    return true;
+}
 
 std::string
 hexStr(uint32_t checkpointNum)

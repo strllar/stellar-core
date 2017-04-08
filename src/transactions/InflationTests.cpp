@@ -2,17 +2,19 @@
 // under the Apache License, Version 2.0. See the COPYING file at the root
 // of this distribution or at http://www.apache.org/licenses/LICENSE-2.0
 
-#include "main/Application.h"
-#include "util/Timer.h"
-#include "main/Config.h"
-#include "ledger/LedgerManager.h"
-#include "ledger/LedgerDelta.h"
 #include "herder/LedgerCloseData.h"
-#include "main/test.h"
+#include "ledger/LedgerDelta.h"
+#include "ledger/LedgerManager.h"
 #include "lib/catch.hpp"
-#include "util/Logging.h"
-#include "TxTests.h"
+#include "main/Application.h"
+#include "main/Config.h"
+#include "test/TestAccount.h"
+#include "test/TestUtils.h"
+#include "test/TxTests.h"
+#include "test/test.h"
 #include "transactions/InflationOpFrame.h"
+#include "util/Logging.h"
+#include "util/Timer.h"
 #include <functional>
 
 using namespace stellar;
@@ -36,9 +38,7 @@ createTestAccounts(Application& app, int nbAccounts,
                    std::function<int(int)> getVote)
 {
     // set up world
-    SecretKey root = getRoot(app.getNetworkID());
-
-    SequenceNumber rootSeq = getAccountSeqNum(root, app) + 1;
+    auto root = TestAccount::createRoot(app);
 
     auto& lm = app.getLedgerManager();
     auto& db = app.getDatabase();
@@ -52,7 +52,7 @@ createTestAccounts(Application& app, int nbAccounts,
         if (bal >= 0)
         {
             SecretKey to = getTestAccount(i);
-            applyCreateAccountTx(app, root, to, rootSeq++, setupBalance);
+            root.create(to, setupBalance);
 
             AccountFrame::pointer act;
             act = loadAccount(to, app);
@@ -100,22 +100,21 @@ simulateInflation(int nbAccounts, int64& totCoins, int64& totFees,
     }
 
     // sort by votes, then by ID in descending order
-    std::sort(votesV.begin(), votesV.end(),
-              [](std::pair<int, int64> const& l, std::pair<int, int64> const& r)
-              {
-                  if (l.second > r.second)
-                  {
-                      return true;
-                  }
-                  else if (l.second < r.second)
-                  {
-                      return false;
-                  }
-                  else
-                  {
-                      return l.first > r.first;
-                  }
-              });
+    std::sort(votesV.begin(), votesV.end(), [](std::pair<int, int64> const& l,
+                                               std::pair<int, int64> const& r) {
+        if (l.second > r.second)
+        {
+            return true;
+        }
+        else if (l.second < r.second)
+        {
+            return false;
+        }
+        else
+        {
+            return l.first > r.first;
+        }
+    });
 
     std::vector<int> winners;
     int64 totVotes = totCoins;
@@ -129,14 +128,15 @@ simulateInflation(int nbAccounts, int64& totCoins, int64& totFees,
 
     // 1% annual inflation on a weekly basis
     // 0.000190721
-    int64 coinsToDole = bigDivide(totCoins, 190721, 1000000000);
+    int64 coinsToDole = bigDivide(totCoins, 190721, 1000000000, ROUND_DOWN);
     coinsToDole += totFees;
     int64 leftToDole = coinsToDole;
 
     for (auto w : winners)
     {
         // computes the share of this guy
-        int64 toDoleToThis = bigDivide(coinsToDole, votes.at(w), totVotes);
+        int64 toDoleToThis =
+            bigDivide(coinsToDole, votes.at(w), totVotes, ROUND_DOWN);
         if (balances[w] >= 0)
         {
             balances[w] += toDoleToThis;
@@ -199,19 +199,15 @@ doInflation(Application& app, int nbAccounts,
 
     std::vector<int64> expectedBalances;
 
-    auto root = getRoot(app.getNetworkID());
-    TransactionFramePtr txFrame = createInflation(
-        app.getNetworkID(), root, getAccountSeqNum(root, app) + 1);
+    auto root = TestAccount::createRoot(app);
+    TransactionFramePtr txFrame =
+        createInflation(app.getNetworkID(), root, root.nextSequenceNumber());
 
     expectedFees += txFrame->getFee();
 
     expectedBalances =
         simulateInflation(nbAccounts, expectedTotcoins, expectedFees,
-                          [&](int i)
-                          {
-                              return balances[i];
-                          },
-                          getVote);
+                          [&](int i) { return balances[i]; }, getVote);
 
     // perform actual inflation
     {
@@ -284,7 +280,7 @@ TEST_CASE("inflation", "[tx][inflation]")
     Application::pointer appPtr = Application::create(clock, cfg);
     Application& app = *appPtr;
 
-    SecretKey root = getRoot(app.getNetworkID());
+    auto root = TestAccount::createRoot(app);
 
     app.start();
 
@@ -294,48 +290,54 @@ TEST_CASE("inflation", "[tx][inflation]")
     SECTION("not time")
     {
         closeLedgerOn(app, 2, 30, 6, 2014);
-        applyInflation(app, root, rootSeq++, INFLATION_NOT_TIME);
+        applyInflation(app, root, root.nextSequenceNumber(),
+                       INFLATION_NOT_TIME);
 
         REQUIRE(app.getLedgerManager().getCurrentLedgerHeader().inflationSeq ==
                 0);
 
         closeLedgerOn(app, 3, 1, 7, 2014);
 
-        auto txFrame = createInflation(app.getNetworkID(), root, rootSeq++);
+        auto txFrame = createInflation(app.getNetworkID(), root,
+                                       root.nextSequenceNumber());
 
         closeLedgerOn(app, 4, 7, 7, 2014, txFrame);
         REQUIRE(app.getLedgerManager().getCurrentLedgerHeader().inflationSeq ==
                 1);
 
-        applyInflation(app, root, rootSeq++, INFLATION_NOT_TIME);
+        applyInflation(app, root, root.nextSequenceNumber(),
+                       INFLATION_NOT_TIME);
         REQUIRE(app.getLedgerManager().getCurrentLedgerHeader().inflationSeq ==
                 1);
 
         closeLedgerOn(app, 5, 8, 7, 2014);
-        applyInflation(app, root, rootSeq++, INFLATION_SUCCESS);
+        applyInflation(app, root, root.nextSequenceNumber(), INFLATION_SUCCESS);
         REQUIRE(app.getLedgerManager().getCurrentLedgerHeader().inflationSeq ==
                 2);
 
         closeLedgerOn(app, 6, 14, 7, 2014);
-        applyInflation(app, root, rootSeq++, INFLATION_NOT_TIME);
+        applyInflation(app, root, root.nextSequenceNumber(),
+                       INFLATION_NOT_TIME);
         REQUIRE(app.getLedgerManager().getCurrentLedgerHeader().inflationSeq ==
                 2);
 
         closeLedgerOn(app, 7, 15, 7, 2014);
-        applyInflation(app, root, rootSeq++, INFLATION_SUCCESS);
+        applyInflation(app, root, root.nextSequenceNumber(), INFLATION_SUCCESS);
         REQUIRE(app.getLedgerManager().getCurrentLedgerHeader().inflationSeq ==
                 3);
 
         closeLedgerOn(app, 8, 21, 7, 2014);
-        applyInflation(app, root, rootSeq++, INFLATION_NOT_TIME);
+        applyInflation(app, root, root.nextSequenceNumber(),
+                       INFLATION_NOT_TIME);
         REQUIRE(app.getLedgerManager().getCurrentLedgerHeader().inflationSeq ==
                 3);
     }
     // minVote to participate in inflation
     const int64 minVote = 1000000000LL;
     // .05% of all coins
-    const int64 winnerVote = bigDivide(
-        app.getLedgerManager().getCurrentLedgerHeader().totalCoins, 5, 10000);
+    const int64 winnerVote =
+        bigDivide(app.getLedgerManager().getCurrentLedgerHeader().totalCoins, 5,
+                  10000, ROUND_DOWN);
 
     SECTION("inflation scenarios")
     {
@@ -344,8 +346,7 @@ TEST_CASE("inflation", "[tx][inflation]")
         int nbAccounts = 0;
         int expectedWinners = 0;
 
-        auto verify = [&]()
-        {
+        auto verify = [&]() {
             if (nbAccounts != 0)
             {
                 createTestAccounts(app, nbAccounts, balanceFunc, voteFunc);
@@ -360,12 +361,8 @@ TEST_CASE("inflation", "[tx][inflation]")
         {
             nbAccounts = 120;
             expectedWinners = 2;
-            voteFunc = [&](int n)
-            {
-                return (n + 1) % nbAccounts;
-            };
-            balanceFunc = [&](int n)
-            {
+            voteFunc = [&](int n) { return (n + 1) % nbAccounts; };
+            balanceFunc = [&](int n) {
                 if (n == 0 || n == 5)
                 {
                     return winnerVote;
@@ -389,12 +386,8 @@ TEST_CASE("inflation", "[tx][inflation]")
                 nbAccounts = 2200;
                 expectedWinners = 0;
             }
-            voteFunc = [&](int n)
-            {
-                return (n + 1) % nbAccounts;
-            };
-            balanceFunc = [&](int n)
-            {
+            voteFunc = [&](int n) { return (n + 1) % nbAccounts; };
+            balanceFunc = [&](int n) {
                 int64 balance = (n + 1) * minVote;
                 assert(balance < winnerVote);
                 return balance;
@@ -405,14 +398,8 @@ TEST_CASE("inflation", "[tx][inflation]")
         {
             nbAccounts = 12;
             expectedWinners = 1;
-            voteFunc = [&](int n)
-            {
-                return 0;
-            };
-            balanceFunc = [&](int n)
-            {
-                return 1 + (winnerVote / nbAccounts);
-            };
+            voteFunc = [&](int n) { return 0; };
+            balanceFunc = [&](int n) { return 1 + (winnerVote / nbAccounts); };
             verify();
         }
         SECTION("50/50 split")
@@ -421,30 +408,19 @@ TEST_CASE("inflation", "[tx][inflation]")
             expectedWinners = 2;
             const int midPoint = nbAccounts / 2;
 
-            const int64 each = bigDivide(winnerVote, 2, nbAccounts) + minVote;
+            const int64 each =
+                bigDivide(winnerVote, 2, nbAccounts, ROUND_DOWN) + minVote;
 
-            voteFunc = [&](int n)
-            {
-                return (n < midPoint) ? 0 : 1;
-            };
-            balanceFunc = [&](int n)
-            {
-                return each;
-            };
+            voteFunc = [&](int n) { return (n < midPoint) ? 0 : 1; };
+            balanceFunc = [&](int n) { return each; };
             verify();
         }
         SECTION("no winner")
         {
             nbAccounts = 12;
             expectedWinners = 0;
-            voteFunc = [&](int n)
-            {
-                return -1;
-            };
-            balanceFunc = [&](int n)
-            {
-                return (n + 1) * minVote;
-            };
+            voteFunc = [&](int n) { return -1; };
+            balanceFunc = [&](int n) { return (n + 1) * minVote; };
             verify();
         }
         SECTION("some winner does not exist")
@@ -453,14 +429,11 @@ TEST_CASE("inflation", "[tx][inflation]")
             expectedWinners = 1;
             const int midPoint = nbAccounts / 2;
 
-            const int64 each = bigDivide(winnerVote, 2, nbAccounts) + minVote;
+            const int64 each =
+                bigDivide(winnerVote, 2, nbAccounts, ROUND_DOWN) + minVote;
 
-            voteFunc = [&](int n)
-            {
-                return (n < midPoint) ? 0 : 1;
-            };
-            balanceFunc = [&](int n)
-            {
+            voteFunc = [&](int n) { return (n < midPoint) ? 0 : 1; };
+            balanceFunc = [&](int n) {
                 // account "0" does not exist
                 return (n == 0) ? -1 : each;
             };

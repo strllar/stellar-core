@@ -68,7 +68,7 @@ namespace cache {
             }
         }
 
-        const value_t& get(const key_t& key) {
+        value_t& get(const key_t& key) {
             auto it = _cache_items_map.find(key);
             if(it == _cache_items_map.end()) {
                 throw std::range_error("There is no such key in cache");
@@ -83,6 +83,19 @@ namespace cache {
             if (it != _cache_items_map.end()) {
                 _cache_items_list.erase(it->second);
                 _cache_items_map.erase(it);
+            }
+        }
+
+        template<typename F>
+        void erase_if(const F &f) {
+            for (auto it = std::begin(_cache_items_map); it != std::end(_cache_items_map);) {
+                if (f(it->second->second)) {
+                    _cache_items_list.erase(it->second);
+                    it = _cache_items_map.erase(it);
+                }
+                else {
+                    ++it;
+                }
             }
         }
 

@@ -6,10 +6,11 @@
 
 #include <algorithm>
 
-#include "xdrpp/marshal.h"
-#include "crypto/SHA.h"
 #include "crypto/Hex.h"
+#include "crypto/KeyUtils.h"
+#include "crypto/SHA.h"
 #include "crypto/SecretKey.h"
+#include "xdrpp/marshal.h"
 
 namespace stellar
 {
@@ -25,7 +26,7 @@ SCPDriver::getValueString(Value const& v) const
 std::string
 SCPDriver::toShortString(PublicKey const& pk) const
 {
-    return PubKeyUtils::toShortString(pk);
+    return KeyUtils::toShortString(pk);
 }
 
 // values used to switch hash function between priority and neighborhood checks
@@ -54,25 +55,22 @@ uint64
 SCPDriver::computeHashNode(uint64 slotIndex, Value const& prev, bool isPriority,
                            int32_t roundNumber, NodeID const& nodeID)
 {
-    return hashHelper(slotIndex, prev, [&](SHA256* h)
-                      {
-                          h->add(
-                              xdr::xdr_to_opaque(isPriority ? hash_P : hash_N));
-                          h->add(xdr::xdr_to_opaque(roundNumber));
-                          h->add(xdr::xdr_to_opaque(nodeID));
-                      });
+    return hashHelper(slotIndex, prev, [&](SHA256* h) {
+        h->add(xdr::xdr_to_opaque(isPriority ? hash_P : hash_N));
+        h->add(xdr::xdr_to_opaque(roundNumber));
+        h->add(xdr::xdr_to_opaque(nodeID));
+    });
 }
 
 uint64
 SCPDriver::computeValueHash(uint64 slotIndex, Value const& prev,
                             int32_t roundNumber, Value const& value)
 {
-    return hashHelper(slotIndex, prev, [&](SHA256* h)
-                      {
-                          h->add(xdr::xdr_to_opaque(hash_K));
-                          h->add(xdr::xdr_to_opaque(roundNumber));
-                          h->add(xdr::xdr_to_opaque(value));
-                      });
+    return hashHelper(slotIndex, prev, [&](SHA256* h) {
+        h->add(xdr::xdr_to_opaque(hash_K));
+        h->add(xdr::xdr_to_opaque(roundNumber));
+        h->add(xdr::xdr_to_opaque(value));
+    });
 }
 
 static const int MAX_TIMEOUT_SECONDS = (30 * 60);

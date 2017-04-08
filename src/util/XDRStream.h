@@ -4,12 +4,13 @@
 // under the Apache License, Version 2.0. See the COPYING file at the root
 // of this distribution or at http://www.apache.org/licenses/LICENSE-2.0
 
-#include <string>
-#include <fstream>
-#include <vector>
-#include "xdrpp/marshal.h"
-#include "crypto/SHA.h"
 #include "crypto/ByteSlice.h"
+#include "crypto/SHA.h"
+#include "util/Logging.h"
+#include "xdrpp/marshal.h"
+#include <fstream>
+#include <string>
+#include <vector>
 
 namespace stellar
 {
@@ -22,8 +23,13 @@ class XDRInputFileStream
 {
     std::ifstream mIn;
     std::vector<char> mBuf;
+    int mSizeLimit;
 
   public:
+    XDRInputFileStream(int sizeLimit = 0) : mSizeLimit{sizeLimit}
+    {
+    }
+
     void
     close()
     {
@@ -37,7 +43,11 @@ class XDRInputFileStream
         if (!mIn)
         {
             std::string msg("failed to open XDR file: ");
-            throw std::runtime_error(msg + filename);
+            msg += filename;
+            msg += ", reason: ";
+            msg += std::to_string(errno);
+            CLOG(ERROR, "Fs") << msg;
+            throw std::runtime_error(msg);
         }
     }
 
@@ -67,6 +77,10 @@ class XDRInputFileStream
         sz <<= 8;
         sz |= static_cast<uint8_t>(szBuf[3]);
 
+        if (mSizeLimit != 0 && sz > mSizeLimit)
+        {
+            return false;
+        }
         if (sz > mBuf.size())
         {
             mBuf.resize(sz);
@@ -100,7 +114,11 @@ class XDROutputFileStream
         if (!mOut)
         {
             std::string msg("failed to open XDR file: ");
-            throw std::runtime_error(msg + filename);
+            msg += filename;
+            msg += ", reason: ";
+            msg += std::to_string(errno);
+            CLOG(FATAL, "Fs") << msg;
+            throw std::runtime_error(msg);
         }
     }
 

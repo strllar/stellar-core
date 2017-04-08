@@ -7,9 +7,9 @@
 #include "herder/Herder.h"
 #include "ledger/LedgerManager.h"
 #include "main/Application.h"
-#include "main/test.h"
 #include "overlay/OverlayManager.h"
 #include "overlay/PeerRecord.h"
+#include "test/test.h"
 #include "util/Logging.h"
 #include "util/Math.h"
 #include "util/types.h"
@@ -136,6 +136,10 @@ Simulation::addTCPConnection(NodeID initiator, NodeID acceptor)
     }
     auto from = getNode(initiator);
     auto to = getNode(acceptor);
+    if (to->getConfig().PEER_PORT == 0)
+    {
+        throw runtime_error("PEER_PORT cannot be set to 0");
+    }
     PeerRecord pr{"127.0.0.1", to->getConfig().PEER_PORT,
                   from->getClock().now()};
     from->getOverlayManager().connectTo(pr);
@@ -209,8 +213,7 @@ void
 Simulation::crankForAtMost(VirtualClock::duration seconds, bool finalCrank)
 {
     bool stop = false;
-    auto stopIt = [&](asio::error_code const& error)
-    {
+    auto stopIt = [&](asio::error_code const& error) {
         if (!error)
             stop = true;
     };
@@ -238,8 +241,7 @@ void
 Simulation::crankForAtLeast(VirtualClock::duration seconds, bool finalCrank)
 {
     bool stop = false;
-    auto stopIt = [&](asio::error_code const& error)
-    {
+    auto stopIt = [&](asio::error_code const& error) {
         if (!error)
             stop = true;
     };
@@ -264,12 +266,8 @@ Simulation::crankForAtLeast(VirtualClock::duration seconds, bool finalCrank)
 void
 Simulation::crankUntilSync(VirtualClock::duration timeout, bool finalCrank)
 {
-    crankUntil(
-        [&]()
-        {
-            return this->accountsOutOfSyncWithDb().empty();
-        },
-        timeout, finalCrank);
+    crankUntil([&]() { return this->accountsOutOfSyncWithDb().empty(); },
+               timeout, finalCrank);
 }
 
 void
@@ -283,8 +281,7 @@ Simulation::crankUntil(function<bool()> const& predicate,
     bool done = false;
 
     VirtualTimer checkTimer(*mIdleApp);
-    function<void()> checkDone = [&]()
-    {
+    function<void()> checkDone = [&]() {
         if (predicate())
             done = true;
         else
@@ -295,8 +292,7 @@ Simulation::crankUntil(function<bool()> const& predicate,
     };
 
     timeoutTimer.async_wait(
-        [&]()
-        {
+        [&]() {
             checkDone();
             timedOut = true;
         },
@@ -326,6 +322,32 @@ Simulation::crankUntil(function<bool()> const& predicate,
         }
         if (timedOut)
             throw runtime_error("Simulation timed out");
+    }
+}
+
+void
+Simulation::crankUntil(VirtualClock::time_point timePoint, bool finalCrank)
+{
+    bool stop = false;
+    auto stopIt = [&](asio::error_code const& error) {
+        if (!error)
+            stop = true;
+    };
+
+    VirtualTimer checkTimer(*mIdleApp);
+
+    checkTimer.expires_at(timePoint);
+    checkTimer.async_wait(stopIt);
+
+    while (!stop)
+    {
+        if (crankAllNodes() == 0)
+            std::this_thread::sleep_for(chrono::milliseconds(50));
+    }
+
+    if (finalCrank)
+    {
+        stopAllNodes();
     }
 }
 

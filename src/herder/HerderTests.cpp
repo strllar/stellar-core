@@ -3,21 +3,22 @@
 // of this distribution or at http://www.apache.org/licenses/LICENSE-2.0
 
 #include "herder/HerderImpl.h"
-#include "scp/SCP.h"
 #include "main/Application.h"
 #include "main/Config.h"
+#include "scp/SCP.h"
 #include "simulation/Simulation.h"
+#include "test/TestAccount.h"
+#include "test/test.h"
 
-#include "main/test.h"
-#include "lib/catch.hpp"
 #include "crypto/SHA.h"
-#include "transactions/TxTests.h"
 #include "database/Database.h"
-#include "ledger/LedgerManager.h"
-#include "main/CommandHandler.h"
 #include "ledger/LedgerHeaderFrame.h"
-#include "simulation/Simulation.h"
+#include "ledger/LedgerManager.h"
+#include "lib/catch.hpp"
+#include "main/CommandHandler.h"
 #include "overlay/OverlayManager.h"
+#include "simulation/Simulation.h"
+#include "test/TxTests.h"
 
 #include "xdrpp/marshal.h"
 
@@ -45,23 +46,19 @@ TEST_CASE("standalone", "[herder]")
     app->start();
 
     // set up world
-    SecretKey root = getRoot(networkID);
+    auto root = TestAccount::createRoot(*app);
     SecretKey a1 = getAccount("A");
     SecretKey b1 = getAccount("B");
 
     const int64_t paymentAmount = app->getLedgerManager().getMinBalance(0);
 
-    AccountFrame::pointer rootAccount = loadAccount(root, *app);
-
-    SequenceNumber rootSeq = getAccountSeqNum(root, *app) + 1;
     SECTION("basic ledger close on valid txs")
     {
         bool stop = false;
         VirtualTimer setupTimer(*app);
         VirtualTimer checkTimer(*app);
 
-        auto check = [&](asio::error_code const& error)
-        {
+        auto check = [&](asio::error_code const& error) {
             stop = true;
 
             REQUIRE(app->getLedgerManager().getLastClosedLedgerNum() > 2);
@@ -73,13 +70,12 @@ TEST_CASE("standalone", "[herder]")
             REQUIRE(b1Account->getBalance() == paymentAmount);
         };
 
-        auto setup = [&](asio::error_code const& error)
-        {
+        auto setup = [&](asio::error_code const& error) {
             // create accounts
             TransactionFramePtr txFrameA1 = createCreateAccountTx(
-                networkID, root, a1, rootSeq++, paymentAmount);
+                networkID, root, a1, root.nextSequenceNumber(), paymentAmount);
             TransactionFramePtr txFrameA2 = createCreateAccountTx(
-                networkID, root, b1, rootSeq++, paymentAmount);
+                networkID, root, b1, root.nextSequenceNumber(), paymentAmount);
 
             REQUIRE(app->getHerder().recvTransaction(txFrameA1) ==
                     Herder::TX_STATUS_PENDING);
@@ -169,7 +165,7 @@ TEST_CASE("txset", "[herder]")
     app->start();
 
     // set up world
-    SecretKey root = getRoot(networkID);
+    auto root = TestAccount::createRoot(*app);
 
     const int nbAccounts = 2;
     const int nbTransactions = 5;
@@ -177,21 +173,11 @@ TEST_CASE("txset", "[herder]")
 
     const int64_t paymentAmount = app->getLedgerManager().getMinBalance(0);
 
-    AccountFrame::pointer rootAccount;
-
-    rootAccount = loadAccount(root, *app);
-
-    SequenceNumber rootSeq = getAccountSeqNum(root, *app) + 1;
-
-    SecretKey sourceAccount = getAccount("source");
-
     int64_t amountPop =
         nbAccounts * nbTransactions * app->getLedgerManager().getTxFee() +
         paymentAmount;
 
-    applyCreateAccountTx(*app, root, sourceAccount, rootSeq++, amountPop);
-
-    SequenceNumber sourceSeq = getAccountSeqNum(sourceAccount, *app) + 1;
+    auto sourceAccount = root.create("source", amountPop);
 
     std::vector<std::vector<TransactionFramePtr>> transactions;
 
@@ -205,15 +191,15 @@ TEST_CASE("txset", "[herder]")
         {
             if (j == 0)
             {
-                transactions[i].emplace_back(
-                    createCreateAccountTx(networkID, sourceAccount, accounts[i],
-                                          sourceSeq++, paymentAmount));
+                transactions[i].emplace_back(createCreateAccountTx(
+                    networkID, sourceAccount, accounts[i],
+                    sourceAccount.nextSequenceNumber(), paymentAmount));
             }
             else
             {
-                transactions[i].emplace_back(
-                    createPaymentTx(networkID, sourceAccount, accounts[i],
-                                    sourceSeq++, paymentAmount));
+                transactions[i].emplace_back(createPaymentTx(
+                    networkID, sourceAccount, accounts[i],
+                    sourceAccount.nextSequenceNumber(), paymentAmount));
             }
         }
     }
@@ -268,9 +254,9 @@ TEST_CASE("txset", "[herder]")
         {
             SECTION("gap after")
             {
-                txSet->add(createPaymentTx(networkID, sourceAccount,
-                                           accounts[0], sourceSeq + 5,
-                                           paymentAmount));
+                txSet->add(createPaymentTx(
+                    networkID, sourceAccount, accounts[0],
+                    sourceAccount.getLastSequenceNumber() + 5, paymentAmount));
                 txSet->sortForHash();
                 REQUIRE(!txSet->checkValid(*app));
 
@@ -303,7 +289,8 @@ TEST_CASE("txset", "[herder]")
         {
             // extra transaction would push the account below the reserve
             txSet->add(createPaymentTx(networkID, sourceAccount, accounts[0],
-                                       sourceSeq++, paymentAmount));
+                                       sourceAccount.nextSequenceNumber(),
+                                       paymentAmount));
             txSet->sortForHash();
             REQUIRE(!txSet->checkValid(*app));
 
@@ -336,25 +323,11 @@ TEST_CASE("surge", "[herder]")
         cfg.DESIRED_MAX_TX_PER_LEDGER;
 
     // set up world
-    SecretKey root = getRoot(networkID);
+    auto root = TestAccount::createRoot(*app);
 
-    AccountFrame::pointer rootAccount;
-
-    SecretKey destAccount = getAccount("destAccount");
-
-    rootAccount = loadAccount(root, *app);
-
-    SequenceNumber rootSeq = getAccountSeqNum(root, *app) + 1;
-
-    applyCreateAccountTx(*app, root, destAccount, rootSeq++, 500000000);
-
-    SecretKey accountB = getAccount("accountB");
-    applyCreateAccountTx(*app, root, accountB, rootSeq++, 5000000000);
-    SequenceNumber accountBSeq = getAccountSeqNum(accountB, *app) + 1;
-
-    SecretKey accountC = getAccount("accountC");
-    applyCreateAccountTx(*app, root, accountC, rootSeq++, 5000000000);
-    SequenceNumber accountCSeq = getAccountSeqNum(accountC, *app) + 1;
+    auto destAccount = root.create("destAccount", 500000000);
+    auto accountB = root.create("accountB", 5000000000);
+    auto accountC = root.create("accountC", 5000000000);
 
     TxSetFramePtr txSet = std::make_shared<TxSetFrame>(
         app->getLedgerManager().getLastClosedLedgerHeader().hash);
@@ -364,8 +337,8 @@ TEST_CASE("surge", "[herder]")
         // extra transaction would push the account below the reserve
         for (int n = 0; n < 10; n++)
         {
-            txSet->add(createPaymentTx(networkID, root, destAccount, rootSeq++,
-                                       n + 10));
+            txSet->add(createPaymentTx(networkID, root, destAccount,
+                                       root.nextSequenceNumber(), n + 10));
         }
         txSet->sortForHash();
         txSet->surgePricingFilter(lm);
@@ -378,8 +351,8 @@ TEST_CASE("surge", "[herder]")
         // extra transaction would push the account below the reserve
         for (int n = 0; n < 10; n++)
         {
-            txSet->add(createPaymentTx(networkID, root, destAccount, rootSeq++,
-                                       n + 10));
+            txSet->add(createPaymentTx(networkID, root, destAccount,
+                                       root.nextSequenceNumber(), n + 10));
         }
         random_shuffle(txSet->mTransactions.begin(),
                        txSet->mTransactions.end());
@@ -394,10 +367,10 @@ TEST_CASE("surge", "[herder]")
         // extra transaction would push the account below the reserve
         for (int n = 0; n < 10; n++)
         {
-            txSet->add(createPaymentTx(networkID, root, destAccount, rootSeq++,
-                                       n + 10));
+            txSet->add(createPaymentTx(networkID, root, destAccount,
+                                       root.nextSequenceNumber(), n + 10));
             auto tx = createPaymentTx(networkID, accountB, destAccount,
-                                      accountBSeq++, n + 10);
+                                      accountB.nextSequenceNumber(), n + 10);
             tx->getEnvelope().tx.fee = tx->getEnvelope().tx.fee * 2;
             txSet->add(tx);
         }
@@ -410,44 +383,19 @@ TEST_CASE("surge", "[herder]")
             REQUIRE(tx->getSourceID() == accountB.getPublicKey());
         }
     }
-    SECTION("one account paying more except for one tx")
-    {
-        // extra transaction would push the account below the reserve
-        for (int n = 0; n < 10; n++)
-        {
-            auto tx = createPaymentTx(networkID, root, destAccount, rootSeq++,
-                                      n + 10);
-            tx->getEnvelope().tx.fee = tx->getEnvelope().tx.fee * 2;
-            txSet->add(tx);
-
-            tx = createPaymentTx(networkID, accountB, destAccount,
-                                 accountBSeq++, n + 10);
-            if (n != 1)
-                tx->getEnvelope().tx.fee = tx->getEnvelope().tx.fee * 3;
-            txSet->add(tx);
-        }
-        txSet->sortForHash();
-        txSet->surgePricingFilter(lm);
-        REQUIRE(txSet->mTransactions.size() == 5);
-        REQUIRE(txSet->checkValid(*app));
-        for (auto& tx : txSet->mTransactions)
-        {
-            REQUIRE(tx->getSourceID() == root.getPublicKey());
-        }
-    }
 
     SECTION("one account paying more except for one tx")
     {
         // extra transaction would push the account below the reserve
         for (int n = 0; n < 10; n++)
         {
-            auto tx = createPaymentTx(networkID, root, destAccount, rootSeq++,
-                                      n + 10);
+            auto tx = createPaymentTx(networkID, root, destAccount,
+                                      root.nextSequenceNumber(), n + 10);
             tx->getEnvelope().tx.fee = tx->getEnvelope().tx.fee * 2;
             txSet->add(tx);
 
             tx = createPaymentTx(networkID, accountB, destAccount,
-                                 accountBSeq++, n + 10);
+                                 accountB.nextSequenceNumber(), n + 10);
             if (n != 1)
                 tx->getEnvelope().tx.fee = tx->getEnvelope().tx.fee * 3;
             txSet->add(tx);
@@ -467,12 +415,12 @@ TEST_CASE("surge", "[herder]")
         // extra transaction would push the account below the reserve
         for (int n = 0; n < 30; n++)
         {
-            txSet->add(createPaymentTx(networkID, root, destAccount, rootSeq++,
-                                       n + 10));
+            txSet->add(createPaymentTx(networkID, root, destAccount,
+                                       root.nextSequenceNumber(), n + 10));
             txSet->add(createPaymentTx(networkID, accountB, destAccount,
-                                       accountBSeq++, n + 10));
+                                       accountB.nextSequenceNumber(), n + 10));
             txSet->add(createPaymentTx(networkID, accountC, destAccount,
-                                       accountCSeq++, n + 10));
+                                       accountC.nextSequenceNumber(), n + 10));
         }
         txSet->sortForHash();
         txSet->surgePricingFilter(lm);
@@ -497,36 +445,62 @@ TEST_CASE("SCP Driver", "[herder]")
 
     auto const& lcl = app->getLedgerManager().getLastClosedLedgerHeader();
 
-    SecretKey root = getRoot(networkID);
+    auto root = TestAccount::createRoot(*app);
     SecretKey a1 = getAccount("A");
+
+    using TxPair = std::pair<Value, TxSetFramePtr>;
+    auto makeTxPair = [](TxSetFramePtr txSet, uint64_t closeTime) {
+        txSet->sortForHash();
+        auto sv = StellarValue{txSet->getContentsHash(), closeTime,
+                               emptyUpgradeSteps, 0};
+        auto v = xdr::xdr_to_opaque(sv);
+
+        return TxPair{v, txSet};
+    };
+    auto makeEnvelope = [&root](TxPair const& p, Hash qSetHash,
+                                uint64_t slotIndex) {
+        // herder must want the TxSet before receiving it, so we are sending it
+        // fake envelope
+        auto envelope = SCPEnvelope{};
+        envelope.statement.slotIndex = slotIndex;
+        envelope.statement.pledges.type(SCP_ST_PREPARE);
+        envelope.statement.pledges.prepare().ballot.value = p.first;
+        envelope.statement.pledges.prepare().quorumSetHash = qSetHash;
+        envelope.signature =
+            root.getSecretKey().sign(xdr::xdr_to_opaque(envelope.statement));
+        return envelope;
+    };
+    auto addTransactions = [&](TxSetFramePtr txSet, int n) {
+        txSet->mTransactions.resize(n);
+        std::generate(std::begin(txSet->mTransactions),
+                      std::end(txSet->mTransactions), [&]() {
+                          return createCreateAccountTx(
+                              networkID, root, a1, root.nextSequenceNumber(),
+                              10000000);
+                      });
+    };
+    auto makeTransactions = [&](Hash hash, int n) {
+        auto result = std::make_shared<TxSetFrame>(hash);
+        addTransactions(result, n);
+        return result;
+    };
 
     SECTION("combineCandidates")
     {
-        auto& herder = *static_cast<HerderImpl*>(&app->getHerder());
+        auto& herder = static_cast<HerderImpl&>(app->getHerder());
 
         std::set<Value> candidates;
 
-        auto addToCandidates = [&](TxSetFramePtr txSet, uint64_t closeTime)
-        {
-            txSet->sortForHash();
-            herder.recvTxSet(txSet->getContentsHash(), *txSet);
-
-            StellarValue sv(txSet->getContentsHash(), closeTime,
-                            emptyUpgradeSteps, 0);
-            candidates.emplace(xdr::xdr_to_opaque(sv));
-        };
-        auto addTransactions = [&](TxSetFramePtr txSet, int n)
-        {
-            SequenceNumber rootSeq = getAccountSeqNum(root, *app) + 1;
-            for (int i = 0; i < n; i++)
-            {
-                txSet->mTransactions.emplace_back(createCreateAccountTx(
-                    networkID, root, a1, rootSeq++, 10000000));
-            }
+        auto addToCandidates = [&](TxPair const& p) {
+            candidates.emplace(p.first);
+            auto envelope = makeEnvelope(p, {}, herder.getCurrentLedgerSeq());
+            REQUIRE(herder.recvSCPEnvelope(envelope) ==
+                    Herder::ENVELOPE_STATUS_FETCHING);
+            REQUIRE(herder.recvTxSet(p.second->getContentsHash(), *p.second));
         };
 
-        TxSetFramePtr txSet0 = std::make_shared<TxSetFrame>(lcl.hash);
-        addToCandidates(txSet0, 100);
+        TxSetFramePtr txSet0 = makeTransactions(lcl.hash, 0);
+        addToCandidates(makeTxPair(txSet0, 100));
 
         Value v;
         StellarValue sv;
@@ -536,23 +510,186 @@ TEST_CASE("SCP Driver", "[herder]")
         REQUIRE(sv.closeTime == 100);
         REQUIRE(sv.txSetHash == txSet0->getContentsHash());
 
-        TxSetFramePtr txSet1 = std::make_shared<TxSetFrame>(lcl.hash);
-        addTransactions(txSet1, 10);
+        TxSetFramePtr txSet1 = makeTransactions(lcl.hash, 10);
 
-        addToCandidates(txSet1, 10);
+        addToCandidates(makeTxPair(txSet1, 10));
         v = herder.combineCandidates(1, candidates);
         xdr::xdr_from_opaque(v, sv);
         REQUIRE(sv.closeTime == 100);
         REQUIRE(sv.txSetHash == txSet1->getContentsHash());
 
-        TxSetFramePtr txSet2 = std::make_shared<TxSetFrame>(lcl.hash);
-        addTransactions(txSet2, 5);
+        TxSetFramePtr txSet2 = makeTransactions(lcl.hash, 5);
 
-        addToCandidates(txSet2, 1000);
+        addToCandidates(makeTxPair(txSet2, 1000));
         v = herder.combineCandidates(1, candidates);
         xdr::xdr_from_opaque(v, sv);
         REQUIRE(sv.closeTime == 1000);
         REQUIRE(sv.txSetHash == txSet1->getContentsHash());
+    }
+
+    SECTION("accept qset and txset")
+    {
+        auto makePublicKey = [](int i) {
+            auto hash = sha256("NODE_SEED_" + std::to_string(i));
+            auto secretKey = SecretKey::fromSeed(hash);
+            return secretKey.getPublicKey();
+        };
+
+        auto makeSingleton = [](const PublicKey& key) {
+            auto result = SCPQuorumSet{};
+            result.threshold = 1;
+            result.validators.push_back(key);
+            return result;
+        };
+
+        auto keys = std::vector<PublicKey>{};
+        for (auto i = 0; i < 1001; i++)
+        {
+            keys.push_back(makePublicKey(i));
+        }
+
+        auto saneQSet1 = makeSingleton(keys[0]);
+        auto saneQSet1Hash = sha256(xdr::xdr_to_opaque(saneQSet1));
+        auto saneQSet2 = makeSingleton(keys[1]);
+        auto saneQSet2Hash = sha256(xdr::xdr_to_opaque(saneQSet2));
+
+        auto bigQSet = SCPQuorumSet{};
+        bigQSet.threshold = 1;
+        bigQSet.validators.push_back(keys[0]);
+        for (auto i = 0; i < 10; i++)
+        {
+            bigQSet.innerSets.push_back({});
+            bigQSet.innerSets.back().threshold = 1;
+            for (auto j = i * 100 + 1; j <= (i + 1) * 100; j++)
+                bigQSet.innerSets.back().validators.push_back(keys[j]);
+        }
+        auto bigQSetHash = sha256(xdr::xdr_to_opaque(bigQSet));
+
+        auto& herder = static_cast<HerderImpl&>(app->getHerder());
+        auto transactions1 = makeTransactions(lcl.hash, 50);
+        auto transactions2 = makeTransactions(lcl.hash, 40);
+        auto p1 = makeTxPair(transactions1, 10);
+        auto p2 = makeTxPair(transactions1, 10);
+        auto saneEnvelopeQ1T1 =
+            makeEnvelope(p1, saneQSet1Hash, herder.getCurrentLedgerSeq());
+        auto saneEnvelopeQ1T2 =
+            makeEnvelope(p2, saneQSet1Hash, herder.getCurrentLedgerSeq());
+        auto saneEnvelopeQ2T1 =
+            makeEnvelope(p1, saneQSet2Hash, herder.getCurrentLedgerSeq());
+        auto bigEnvelope =
+            makeEnvelope(p1, bigQSetHash, herder.getCurrentLedgerSeq());
+
+        SECTION("return FETCHING until fetched")
+        {
+            REQUIRE(herder.recvSCPEnvelope(saneEnvelopeQ1T1) ==
+                    Herder::ENVELOPE_STATUS_FETCHING);
+            REQUIRE(herder.recvSCPEnvelope(saneEnvelopeQ1T1) ==
+                    Herder::ENVELOPE_STATUS_FETCHING);
+            REQUIRE(herder.recvSCPQuorumSet(saneQSet1Hash, saneQSet1));
+            REQUIRE(herder.recvTxSet(p1.second->getContentsHash(), *p1.second));
+            // will not return ENVELOPE_STATUS_READY as the recvSCPEnvelope() is
+            // called internally
+            // when QSet and TxSet are both received
+            REQUIRE(herder.recvSCPEnvelope(saneEnvelopeQ1T1) ==
+                    Herder::ENVELOPE_STATUS_PROCESSED);
+        }
+
+        SECTION("only accepts qset once")
+        {
+            REQUIRE(herder.recvSCPEnvelope(saneEnvelopeQ1T1) ==
+                    Herder::ENVELOPE_STATUS_FETCHING);
+            REQUIRE(herder.recvSCPQuorumSet(saneQSet1Hash, saneQSet1));
+            REQUIRE(!herder.recvSCPQuorumSet(saneQSet1Hash, saneQSet1));
+
+            SECTION("when re-receiving the same envelope")
+            {
+                REQUIRE(herder.recvSCPEnvelope(saneEnvelopeQ1T1) ==
+                        Herder::ENVELOPE_STATUS_FETCHING);
+                REQUIRE(!herder.recvSCPQuorumSet(saneQSet1Hash, saneQSet1));
+            }
+
+            SECTION("when receiving different envelope with the same qset")
+            {
+                REQUIRE(herder.recvSCPEnvelope(saneEnvelopeQ1T2) ==
+                        Herder::ENVELOPE_STATUS_FETCHING);
+                REQUIRE(!herder.recvSCPQuorumSet(saneQSet1Hash, saneQSet1));
+            }
+        }
+
+        SECTION("only accepts txset once")
+        {
+            REQUIRE(herder.recvSCPEnvelope(saneEnvelopeQ1T1) ==
+                    Herder::ENVELOPE_STATUS_FETCHING);
+            REQUIRE(herder.recvTxSet(p1.second->getContentsHash(), *p1.second));
+
+            SECTION("when re-receiving the same envelope")
+            {
+                REQUIRE(herder.recvSCPEnvelope(saneEnvelopeQ1T1) ==
+                        Herder::ENVELOPE_STATUS_FETCHING);
+                REQUIRE(!herder.recvTxSet(p1.second->getContentsHash(),
+                                          *p1.second));
+            }
+
+            SECTION("when receiving different envelope with the same txset")
+            {
+                REQUIRE(herder.recvSCPEnvelope(saneEnvelopeQ2T1) ==
+                        Herder::ENVELOPE_STATUS_FETCHING);
+                REQUIRE(!herder.recvTxSet(p1.second->getContentsHash(),
+                                          *p1.second));
+            }
+        }
+
+        SECTION("do not accept unasked qset")
+        {
+            REQUIRE(!herder.recvSCPQuorumSet(saneQSet1Hash, saneQSet1));
+            REQUIRE(!herder.recvSCPQuorumSet(saneQSet2Hash, saneQSet2));
+            REQUIRE(!herder.recvSCPQuorumSet(bigQSetHash, bigQSet));
+        }
+
+        SECTION("do not accept unasked txset")
+        {
+            REQUIRE(
+                !herder.recvTxSet(p1.second->getContentsHash(), *p1.second));
+            REQUIRE(
+                !herder.recvTxSet(p2.second->getContentsHash(), *p2.second));
+        }
+
+        SECTION("do not accept not sane qset")
+        {
+            REQUIRE(herder.recvSCPEnvelope(bigEnvelope) ==
+                    Herder::ENVELOPE_STATUS_FETCHING);
+            REQUIRE(!herder.recvSCPQuorumSet(bigQSetHash, bigQSet));
+        }
+
+        SECTION("do not accept txset from envelope discarded because of unsane "
+                "qset")
+        {
+            REQUIRE(herder.recvSCPEnvelope(bigEnvelope) ==
+                    Herder::ENVELOPE_STATUS_FETCHING);
+            REQUIRE(!herder.recvSCPQuorumSet(bigQSetHash, bigQSet));
+            REQUIRE(
+                !herder.recvTxSet(p1.second->getContentsHash(), *p1.second));
+        }
+
+        SECTION(
+            "accept txset from envelope with unsane qset before receiving qset")
+        {
+            REQUIRE(herder.recvSCPEnvelope(bigEnvelope) ==
+                    Herder::ENVELOPE_STATUS_FETCHING);
+            REQUIRE(herder.recvTxSet(p1.second->getContentsHash(), *p1.second));
+            REQUIRE(!herder.recvSCPQuorumSet(bigQSetHash, bigQSet));
+        }
+
+        SECTION("accept txset from envelopes with both valid and unsane qset")
+        {
+            REQUIRE(herder.recvSCPEnvelope(saneEnvelopeQ1T1) ==
+                    Herder::ENVELOPE_STATUS_FETCHING);
+            REQUIRE(herder.recvSCPEnvelope(bigEnvelope) ==
+                    Herder::ENVELOPE_STATUS_FETCHING);
+            REQUIRE(herder.recvSCPQuorumSet(saneQSet1Hash, saneQSet1));
+            REQUIRE(!herder.recvSCPQuorumSet(bigQSetHash, bigQSet));
+            REQUIRE(herder.recvTxSet(p1.second->getContentsHash(), *p1.second));
+        }
     }
 }
 
@@ -567,9 +704,21 @@ TEST_CASE("SCP State", "[herder]")
 
     Config nodeCfgs[3];
 
+    // Normally ledger should externalize in EXP_LEDGER_TIMESPAN_SECONDS
+    // but for "Force SCP" test there are 3 nodes and only 2 have previous
+    // ledger state. However it is possible that nomination protocol will
+    // choose last node as leader for first few rounds. New ledger will only
+    // be externalized when first or second node are choosen as round leaders.
+    // It some cases it can take more time than expected. Probability of that
+    // is pretty low, but high enough that it forced us to rerun tests from
+    // time to time to pass that one case.
+    //
+    // After changing node ids generated here from random to deterministics
+    // this problem goes away, as the leader selection protocol uses node id
+    // and round id for selecting leader.
     for (int i = 0; i < 3; i++)
     {
-        nodeKeys[i] = SecretKey::random();
+        nodeKeys[i] = SecretKey::fromSeed(sha256("Node_" + std::to_string(i)));
         nodeIDs[i] = nodeKeys[i].getPublicKey();
         nodeCfgs[i] =
             getTestConfig(i + 1, Config::TestDbMode::TESTDB_ON_DISK_SQLITE);
@@ -579,8 +728,7 @@ TEST_CASE("SCP State", "[herder]")
 
     LedgerHeaderHistoryEntry lcl;
 
-    auto doTest = [&](bool forceSCP)
-    {
+    auto doTest = [&](bool forceSCP) {
         // add node0 and node1, in lockstep
         {
             SCPQuorumSet qSet;
@@ -596,12 +744,8 @@ TEST_CASE("SCP State", "[herder]")
         sim->startAllNodes();
         // wait to close exactly once
 
-        sim->crankUntil(
-            [&]()
-            {
-                return sim->haveAllExternalized(2, 1);
-            },
-            std::chrono::seconds(1), true);
+        sim->crankUntil([&]() { return sim->haveAllExternalized(2, 1); },
+                        std::chrono::seconds(1), true);
 
         REQUIRE(sim->getNode(nodeIDs[0])
                     ->getLedgerManager()
@@ -667,12 +811,8 @@ TEST_CASE("SCP State", "[herder]")
 
         // then let the nodes run a bit more, they should all externalize the
         // next ledger
-        sim->crankUntil(
-            [&]()
-            {
-                return sim->haveAllExternalized(3, 2);
-            },
-            Herder::EXP_LEDGER_TIMESPAN_SECONDS, true);
+        sim->crankUntil([&]() { return sim->haveAllExternalized(3, 2); },
+                        Herder::EXP_LEDGER_TIMESPAN_SECONDS, true);
 
         // nodes are at least on ledger 3 (some may be on 4)
         for (int i = 0; i <= 2; i++)
@@ -695,8 +835,7 @@ TEST_CASE("SCP State", "[herder]")
         doTest(false);
 
         sim->crankUntil(
-            [&]()
-            {
+            [&]() {
                 return sim->getNode(nodeIDs[2])
                            ->getLedgerManager()
                            .getLastClosedLedgerNum() == 2;

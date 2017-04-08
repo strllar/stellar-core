@@ -3,10 +3,11 @@
 // of this distribution or at http://www.apache.org/licenses/LICENSE-2.0
 
 #include "ledger/TrustFrame.h"
-#include "crypto/SecretKey.h"
-#include "crypto/SHA.h"
-#include "database/Database.h"
 #include "LedgerDelta.h"
+#include "crypto/KeyUtils.h"
+#include "crypto/SHA.h"
+#include "crypto/SecretKey.h"
+#include "database/Database.h"
 #include "util/types.h"
 
 using namespace std;
@@ -48,7 +49,8 @@ TrustFrame::TrustFrame(TrustFrame const& from) : TrustFrame(from.mEntry)
 {
 }
 
-TrustFrame& TrustFrame::operator=(TrustFrame const& other)
+TrustFrame&
+TrustFrame::operator=(TrustFrame const& other)
 {
     if (&other != this)
     {
@@ -64,17 +66,17 @@ void
 TrustFrame::getKeyFields(LedgerKey const& key, std::string& actIDStrKey,
                          std::string& issuerStrKey, std::string& assetCode)
 {
-    actIDStrKey = PubKeyUtils::toStrKey(key.trustLine().accountID);
+    actIDStrKey = KeyUtils::toStrKey(key.trustLine().accountID);
     if (key.trustLine().asset.type() == ASSET_TYPE_CREDIT_ALPHANUM4)
     {
         issuerStrKey =
-            PubKeyUtils::toStrKey(key.trustLine().asset.alphaNum4().issuer);
+            KeyUtils::toStrKey(key.trustLine().asset.alphaNum4().issuer);
         assetCodeToStr(key.trustLine().asset.alphaNum4().assetCode, assetCode);
     }
     else if (key.trustLine().asset.type() == ASSET_TYPE_CREDIT_ALPHANUM12)
     {
         issuerStrKey =
-            PubKeyUtils::toStrKey(key.trustLine().asset.alphaNum12().issuer);
+            KeyUtils::toStrKey(key.trustLine().asset.alphaNum12().issuer);
         assetCodeToStr(key.trustLine().asset.alphaNum12().assetCode, assetCode);
     }
 
@@ -372,16 +374,16 @@ TrustFrame::loadTrustLine(AccountID const& accountID, Asset const& asset,
 
     std::string accStr, issuerStr, assetStr;
 
-    accStr = PubKeyUtils::toStrKey(accountID);
+    accStr = KeyUtils::toStrKey(accountID);
     if (asset.type() == ASSET_TYPE_CREDIT_ALPHANUM4)
     {
         assetCodeToStr(asset.alphaNum4().assetCode, assetStr);
-        issuerStr = PubKeyUtils::toStrKey(asset.alphaNum4().issuer);
+        issuerStr = KeyUtils::toStrKey(asset.alphaNum4().issuer);
     }
     else if (asset.type() == ASSET_TYPE_CREDIT_ALPHANUM12)
     {
         assetCodeToStr(asset.alphaNum12().assetCode, assetStr);
-        issuerStr = PubKeyUtils::toStrKey(asset.alphaNum12().issuer);
+        issuerStr = KeyUtils::toStrKey(asset.alphaNum12().issuer);
     }
 
     auto query = std::string(trustLineColumnSelector);
@@ -396,10 +398,9 @@ TrustFrame::loadTrustLine(AccountID const& accountID, Asset const& asset,
 
     pointer retLine;
     auto timer = db.getSelectTimer("trust");
-    loadLines(prep, [&retLine](LedgerEntry const& trust)
-              {
-                  retLine = make_shared<TrustFrame>(trust);
-              });
+    loadLines(prep, [&retLine](LedgerEntry const& trust) {
+        retLine = make_shared<TrustFrame>(trust);
+    });
 
     if (retLine)
     {
@@ -455,17 +456,18 @@ TrustFrame::loadLines(StatementContext& prep,
     st.execute(true);
     while (st.got_data())
     {
-        tl.accountID = PubKeyUtils::fromStrKey(actIDStrKey);
+        tl.accountID = KeyUtils::fromStrKey<PublicKey>(actIDStrKey);
         tl.asset.type((AssetType)assetType);
         if (assetType == ASSET_TYPE_CREDIT_ALPHANUM4)
         {
-            tl.asset.alphaNum4().issuer = PubKeyUtils::fromStrKey(issuerStrKey);
+            tl.asset.alphaNum4().issuer =
+                KeyUtils::fromStrKey<PublicKey>(issuerStrKey);
             strToAssetCode(tl.asset.alphaNum4().assetCode, assetCode);
         }
         else if (assetType == ASSET_TYPE_CREDIT_ALPHANUM12)
         {
             tl.asset.alphaNum12().issuer =
-                PubKeyUtils::fromStrKey(issuerStrKey);
+                KeyUtils::fromStrKey<PublicKey>(issuerStrKey);
             strToAssetCode(tl.asset.alphaNum12().assetCode, assetCode);
         }
 
@@ -485,7 +487,7 @@ TrustFrame::loadLines(AccountID const& accountID,
                       std::vector<TrustFrame::pointer>& retLines, Database& db)
 {
     std::string actIDStrKey;
-    actIDStrKey = PubKeyUtils::toStrKey(accountID);
+    actIDStrKey = KeyUtils::toStrKey(accountID);
 
     auto query = std::string(trustLineColumnSelector);
     query += (" WHERE accountid = :id ");
@@ -494,10 +496,9 @@ TrustFrame::loadLines(AccountID const& accountID,
     st.exchange(use(actIDStrKey));
 
     auto timer = db.getSelectTimer("trust");
-    loadLines(prep, [&retLines](LedgerEntry const& cur)
-              {
-                  retLines.emplace_back(make_shared<TrustFrame>(cur));
-              });
+    loadLines(prep, [&retLines](LedgerEntry const& cur) {
+        retLines.emplace_back(make_shared<TrustFrame>(cur));
+    });
 }
 
 std::unordered_map<AccountID, std::vector<TrustFrame::pointer>>
@@ -510,12 +511,10 @@ TrustFrame::loadAllLines(Database& db)
     auto prep = db.getPreparedStatement(query);
 
     auto timer = db.getSelectTimer("trust");
-    loadLines(prep, [&retLines](LedgerEntry const& cur)
-              {
-                  auto& thisUserLines =
-                      retLines[cur.data.trustLine().accountID];
-                  thisUserLines.emplace_back(make_shared<TrustFrame>(cur));
-              });
+    loadLines(prep, [&retLines](LedgerEntry const& cur) {
+        auto& thisUserLines = retLines[cur.data.trustLine().accountID];
+        thisUserLines.emplace_back(make_shared<TrustFrame>(cur));
+    });
     return retLines;
 }
 

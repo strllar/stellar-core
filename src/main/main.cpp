@@ -2,28 +2,29 @@
 // under the Apache License, Version 2.0. See the COPYING file at the root
 // of this distribution or at http://www.apache.org/licenses/LICENSE-2.0
 #include "util/asio.h"
-#include "main/Application.h"
 #include "StellarCoreVersion.h"
-#include "util/Logging.h"
-#include "util/Timer.h"
-#include "util/Fs.h"
+#include "bucket/Bucket.h"
+#include "crypto/Hex.h"
+#include "crypto/KeyUtils.h"
+#include "crypto/SecretKey.h"
+#include "database/Database.h"
+#include "history/HistoryManager.h"
+#include "lib/http/HttpClient.h"
 #include "lib/util/getopt.h"
+#include "main/Application.h"
+#include "main/Config.h"
+#include "main/PersistentState.h"
 #include "main/dumpxdr.h"
 #include "main/fuzz.h"
-#include "main/test.h"
-#include "main/Config.h"
-#include "lib/http/HttpClient.h"
-#include "crypto/Hex.h"
-#include "crypto/SecretKey.h"
-#include "history/HistoryManager.h"
-#include "main/PersistentState.h"
-#include <sodium.h>
-#include "database/Database.h"
-#include "bucket/Bucket.h"
+#include "test/test.h"
+#include "util/Fs.h"
+#include "util/Logging.h"
+#include "util/Timer.h"
 #include "util/optional.h"
 #include <locale>
+#include <sodium.h>
 
-_INITIALIZE_EASYLOGGINGPP
+INITIALIZE_EASYLOGGINGPP
 
 namespace stellar
 {
@@ -50,6 +51,9 @@ enum opttag
     OPT_METRIC,
     OPT_NEWDB,
     OPT_NEWHIST,
+    OPT_PRINTTXN,
+    OPT_SIGNTXN,
+    OPT_NETID,
     OPT_TEST,
     OPT_VERSION
 };
@@ -60,6 +64,9 @@ static const struct option stellar_core_options[] = {
     {"convertid", required_argument, nullptr, OPT_CONVERTID},
     {"checkquorum", optional_argument, nullptr, OPT_CHECKQUORUM},
     {"dumpxdr", required_argument, nullptr, OPT_DUMPXDR},
+    {"printtxn", required_argument, nullptr, OPT_PRINTTXN},
+    {"signtxn", required_argument, nullptr, OPT_SIGNTXN},
+    {"netid", required_argument, nullptr, OPT_NETID},
     {"loadxdr", required_argument, nullptr, OPT_LOADXDR},
     {"forcescp", optional_argument, nullptr, OPT_FORCESCP},
     {"fuzz", required_argument, nullptr, OPT_FUZZ},
@@ -94,7 +101,7 @@ usage(int err = 1)
           "with the local ledger rather than waiting to hear from the "
           "network.\n"
           "      --fuzz FILE     Run a single fuzz input and exit\n"
-          "      --genfuzz FILE  Generate a random fuzzer input file\n "
+          "      --genfuzz FILE  Generate a random fuzzer input file\n"
           "      --genseed       Generate and print a random node seed\n"
           "      --help          Display this string\n"
           "      --inferquorum   Print a quorum set inferred from history\n"
@@ -109,6 +116,15 @@ usage(int err = 1)
           "      --newdb         Creates or restores the DB to the genesis "
           "ledger\n"
           "      --newhist ARCH  Initialize the named history archive ARCH\n"
+          "      --printtxn FILE Pretty-print one transaction envelope,"
+          " then quit\n"
+          "      --signtxn FILE  Add signature to transaction envelope,"
+          " then quit\n"
+          "                      (Key is read from stdin or terminal, as"
+          " appropriate.)\n"
+          "      --netid STRING  Specify network ID for subsequent signtxn\n"
+          "                      (Default is STELLAR_NETWORK_ID environment"
+          "variable)\n"
           "      --test          Run self-tests\n"
           "      --version       Print version information\n";
     exit(err);
@@ -387,14 +403,16 @@ main(int argc, char* const* argv)
     std::vector<std::string> metrics;
 
     int opt;
-    while ((opt = getopt_long_only(argc, argv, "", stellar_core_options,
+    while ((opt = getopt_long_only(argc, argv, "c:", stellar_core_options,
                                    nullptr)) != -1)
     {
         switch (opt)
         {
+        case 'c':
         case OPT_CMD:
             command = optarg;
             rest.insert(rest.begin(), argv + optind, argv + argc);
+            optind = argc;
             break;
         case OPT_CONF:
             cfgFile = std::string(optarg);
@@ -404,6 +422,15 @@ main(int argc, char* const* argv)
             return 0;
         case OPT_DUMPXDR:
             dumpxdr(std::string(optarg));
+            return 0;
+        case OPT_PRINTTXN:
+            printtxn(std::string(optarg));
+            return 0;
+        case OPT_SIGNTXN:
+            signtxn(std::string(optarg));
+            return 0;
+        case OPT_NETID:
+            signtxn_network_id = optarg;
             return 0;
         case OPT_LOADXDR:
             loadXdrBucket = std::string(optarg);
@@ -457,8 +484,9 @@ main(int argc, char* const* argv)
                         metrics);
         }
         case OPT_VERSION:
-            std::cout << STELLAR_CORE_VERSION;
+            std::cout << STELLAR_CORE_VERSION << std::endl;
             return 0;
+        case OPT_HELP:
         default:
             usage(0);
             return 0;
@@ -481,8 +509,7 @@ main(int argc, char* const* argv)
             s += cfgFile + " found";
             throw std::invalid_argument(s);
         }
-        Logging::setFmt(
-            PubKeyUtils::toShortString(cfg.NODE_SEED.getPublicKey()));
+        Logging::setFmt(KeyUtils::toShortString(cfg.NODE_SEED.getPublicKey()));
         Logging::setLogLevel(logLevel, nullptr);
 
         if (command.size())
@@ -498,8 +525,8 @@ main(int argc, char* const* argv)
 
         cfg.REPORT_METRICS = metrics;
 
-        if (forceSCP || newDB || getOfflineInfo || !loadXdrBucket.empty()
-            || inferQuorum || graphQuorum || checkQuorum)
+        if (forceSCP || newDB || getOfflineInfo || !loadXdrBucket.empty() ||
+            inferQuorum || graphQuorum || checkQuorum)
         {
             setNoListen(cfg);
             if (newDB)

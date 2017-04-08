@@ -6,15 +6,15 @@
 #include "main/ApplicationImpl.h"
 #include "main/Config.h"
 
-#include "main/test.h"
+#include "database/Database.h"
 #include "lib/catch.hpp"
 #include "overlay/OverlayManager.h"
 #include "overlay/OverlayManagerImpl.h"
-#include "util/Timer.h"
-#include "database/Database.h"
-#include <soci.h>
-#include "transactions/TxTests.h"
+#include "test/TxTests.h"
+#include "test/test.h"
 #include "transactions/TransactionFrame.h"
+#include "util/SociNoWarnings.h"
+#include "util/Timer.h"
 
 using namespace stellar;
 using namespace std;
@@ -59,7 +59,7 @@ class OverlayManagerStub : public OverlayManagerImpl
     virtual void
     connectTo(PeerRecord& pr) override
     {
-        if (!getConnectedPeer(pr.mIP, pr.mPort))
+        if (!getConnectedPeer(pr.ip(), pr.port()))
         {
             pr.backOff(mApp.getClock());
             pr.storePeerRecord(mApp.getDatabase());

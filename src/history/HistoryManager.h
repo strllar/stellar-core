@@ -4,9 +4,9 @@
 // under the Apache License, Version 2.0. See the COPYING file at the root
 // of this distribution or at http://www.apache.org/licenses/LICENSE-2.0
 
-#include "overlay/StellarXDR.h"
-#include "history/InferredQuorum.h"
 #include "history/HistoryArchive.h"
+#include "history/InferredQuorum.h"
+#include "overlay/StellarXDR.h"
 #include <functional>
 #include <memory>
 
@@ -271,7 +271,7 @@ class HistoryManager
     // catchup probe.
     virtual uint64_t nextCheckpointCatchupProbe(uint32_t ledger) = 0;
 
-    // Emit a log message and call app.setExtraStateInfo() to
+    // Emit a log message and set StatusManager HISTORY status to
     // describe current catchup/publish state. The `contiguous` argument
     // is passed in to describe whether the ledger-manager's view of
     // current catchup tasks is currently contiguous or discontiguous.
@@ -345,7 +345,8 @@ class HistoryManager
     virtual void catchupHistory(
         uint32_t initLedger, CatchupMode mode,
         std::function<void(asio::error_code const& ec, CatchupMode mode,
-                           LedgerHeaderHistoryEntry const& lastClosed)> handler,
+                           LedgerHeaderHistoryEntry const& lastClosed)>
+            handler,
         bool manualCatchup = false) = 0;
 
     // Return the HistoryArchiveState of the LedgerManager's LCL

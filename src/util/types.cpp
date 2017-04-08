@@ -4,8 +4,8 @@
 
 #include "util/types.h"
 #include "lib/util/uint128_t.h"
-#include <locale>
 #include <algorithm>
+#include <locale>
 
 namespace stellar
 {
@@ -23,13 +23,11 @@ isZero(uint256 const& b)
     return true;
 }
 
-Hash& operator^=(Hash& l, Hash const& r)
+Hash&
+operator^=(Hash& l, Hash const& r)
 {
     std::transform(l.begin(), l.end(), r.begin(), l.begin(),
-                   [](uint8_t a, uint8_t b)
-                   {
-                       return a ^ b;
-                   });
+                   [](uint8_t a, uint8_t b) { return a ^ b; });
     return l;
 }
 
@@ -44,17 +42,6 @@ lessThanXored(Hash const& l, Hash const& r, Hash const& x)
     }
 
     return v1 < v2;
-}
-
-uint256
-makePublicKey(uint256 const& b)
-{
-    // SANITY pub from private
-    uint256 ret;
-    ret[0] = b[0];
-    ret[1] = b[1];
-    ret[2] = b[2];
-    return (ret);
 }
 
 bool
@@ -169,12 +156,12 @@ compareAsset(Asset const& first, Asset const& second)
 
 // calculates A*B/C when A*B overflows 64bits
 bool
-bigDivide(int64_t& result, int64_t A, int64_t B, int64_t C)
+bigDivide(int64_t& result, int64_t A, int64_t B, int64_t C, Rounding rounding)
 {
     bool res;
     assert((A >= 0) && (B >= 0) && (C > 0));
     uint64_t r2;
-    res = bigDivide(r2, (uint64_t)A, (uint64_t)B, (uint64_t)C);
+    res = bigDivide(r2, (uint64_t)A, (uint64_t)B, (uint64_t)C, rounding);
     if (res)
     {
         res = r2 <= INT64_MAX;
@@ -184,13 +171,14 @@ bigDivide(int64_t& result, int64_t A, int64_t B, int64_t C)
 }
 
 bool
-bigDivide(uint64_t& result, uint64_t A, uint64_t B, uint64_t C)
+bigDivide(uint64_t& result, uint64_t A, uint64_t B, uint64_t C,
+          Rounding rounding)
 {
     // update when moving to (signed) int128
     uint128_t a(A);
     uint128_t b(B);
     uint128_t c(C);
-    uint128_t x = (a * b) / c;
+    uint128_t x = rounding == ROUND_DOWN ? (a * b) / c : (a * b + c - 1) / c;
 
     result = (uint64_t)x;
 
@@ -198,10 +186,10 @@ bigDivide(uint64_t& result, uint64_t A, uint64_t B, uint64_t C)
 }
 
 int64_t
-bigDivide(int64_t A, int64_t B, int64_t C)
+bigDivide(int64_t A, int64_t B, int64_t C, Rounding rounding)
 {
     int64_t res;
-    if (!bigDivide(res, A, B, C))
+    if (!bigDivide(res, A, B, C, rounding))
     {
         throw std::overflow_error("overflow while performing bigDivide");
     }
@@ -220,7 +208,8 @@ iequals(std::string const& a, std::string const& b)
     return true;
 }
 
-bool operator>=(Price const& a, Price const& b)
+bool
+operator>=(Price const& a, Price const& b)
 {
     uint128_t l(a.n);
     uint128_t r(a.d);
@@ -229,7 +218,8 @@ bool operator>=(Price const& a, Price const& b)
     return l >= r;
 }
 
-bool operator>(Price const& a, Price const& b)
+bool
+operator>(Price const& a, Price const& b)
 {
     uint128_t l(a.n);
     uint128_t r(a.d);
@@ -238,7 +228,8 @@ bool operator>(Price const& a, Price const& b)
     return l > r;
 }
 
-bool operator==(Price const& a, Price const& b)
+bool
+operator==(Price const& a, Price const& b)
 {
     return (a.n == b.n) && (a.d == b.d);
 }

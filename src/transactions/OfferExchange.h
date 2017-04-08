@@ -4,13 +4,42 @@
 // under the Apache License, Version 2.0. See the COPYING file at the root
 // of this distribution or at http://www.apache.org/licenses/LICENSE-2.0
 
-#include "transactions/OperationFrame.h"
 #include "ledger/OfferFrame.h"
-#include <vector>
+#include "transactions/OperationFrame.h"
 #include <functional>
+#include <vector>
 
 namespace stellar
 {
+
+enum class ExchangeResultType
+{
+    NORMAL,
+    REDUCED_TO_ZERO,
+    BOGUS
+};
+
+struct ExchangeResult
+{
+    int64_t numWheatReceived;
+    int64_t numSheepSend;
+    bool reduced;
+
+    ExchangeResultType
+    type() const
+    {
+        if (numWheatReceived != 0 && numSheepSend != 0)
+            return ExchangeResultType::NORMAL;
+        else
+            return reduced ? ExchangeResultType::REDUCED_TO_ZERO
+                           : ExchangeResultType::BOGUS;
+    }
+};
+
+ExchangeResult exchangeV2(int64_t wheatReceived, Price price,
+                          int64_t maxWheatReceive, int64_t maxSheepSend);
+ExchangeResult exchangeV3(int64_t wheatReceived, Price price,
+                          int64_t maxWheatReceive, int64_t maxSheepSend);
 
 class OfferExchange
 {

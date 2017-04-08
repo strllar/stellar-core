@@ -2,32 +2,33 @@
 // under the Apache License, Version 2.0. See the COPYING file at the root
 // of this distribution or at http://www.apache.org/licenses/LICENSE-2.0
 
+#include "ledger/LedgerManagerImpl.h"
+#include "DataFrame.h"
+#include "OfferFrame.h"
+#include "TrustFrame.h"
 #include "bucket/BucketManager.h"
 #include "crypto/Hex.h"
+#include "crypto/KeyUtils.h"
 #include "crypto/SHA.h"
 #include "crypto/SecretKey.h"
 #include "database/Database.h"
 #include "herder/Herder.h"
-#include "herder/TxSetFrame.h"
 #include "herder/LedgerCloseData.h"
+#include "herder/TxSetFrame.h"
 #include "history/HistoryManager.h"
 #include "ledger/LedgerDelta.h"
 #include "ledger/LedgerHeaderFrame.h"
-#include "ledger/LedgerManagerImpl.h"
-#include "TrustFrame.h"
-#include "OfferFrame.h"
-#include "DataFrame.h"
 #include "main/Application.h"
 #include "main/Config.h"
 #include "overlay/OverlayManager.h"
 #include "util/Logging.h"
-#include "util/make_unique.h"
 #include "util/format.h"
+#include "util/make_unique.h"
 
+#include "medida/counter.h"
 #include "medida/meter.h"
 #include "medida/metrics_registry.h"
 #include "medida/timer.h"
-#include "medida/counter.h"
 #include "xdrpp/printer.h"
 #include "xdrpp/types.h"
 
@@ -185,7 +186,7 @@ LedgerManagerImpl::startNewLedger()
         auto txbin = hexToBin("00000000d4dabeadbcc3c0a7c4d1c3e6c7b0a3ac00000000000000000000000000000000ee6b2800000000000000000100000001000000004910e200000000004aa8418000000000000000010000000100000000d0c5d0c4b1c8bbc6bdf0bacdbbf5b1d2b8fcd6d8d2aaa1a30000000000000000000000090000000000000000");
 
         TransactionEnvelope txenv;
-        xdr::xdr_from_opaque<TransactionEnvelope>(txbin, txenv);
+        xdr::xdr_from_opaque(txbin, txenv);
 
         auto txframe = TransactionFrame::makeTransactionFromWire(mApp.getNetworkID(), txenv);
 
@@ -258,8 +259,8 @@ LedgerManagerImpl::loadLastKnownLedger(
             HistoryArchiveState has;
             has.fromString(hasString);
 
-            auto continuation = [this, handler, has](asio::error_code const& ec)
-            {
+            auto continuation = [this, handler,
+                                 has](asio::error_code const& ec) {
                 if (ec)
                 {
                     handler(ec);
@@ -351,6 +352,12 @@ LedgerManagerImpl::getCurrentLedgerHeader()
     return mCurrentLedger->mHeader;
 }
 
+uint32_t
+LedgerManagerImpl::getCurrentLedgerVersion() const
+{
+    return getCurrentLedgerHeader().ledgerVersion;
+}
+
 LedgerHeaderHistoryEntry const&
 LedgerManagerImpl::getLastClosedLedgerHeader() const
 {
@@ -399,8 +406,8 @@ LedgerManagerImpl::externalizeValue(LedgerCloseData const& ledgerData)
                     setState(LM_SYNCED_STATE);
                 }
                 closeLedger(ledgerData);
-                CLOG(INFO, "Ledger")
-                    << "Closed ledger: " << ledgerAbbrev(mLastClosedLedger);
+                CLOG(INFO, "Ledger") << "Closed ledger: "
+                                     << ledgerAbbrev(mLastClosedLedger);
             }
             else
             {
@@ -584,7 +591,6 @@ LedgerManagerImpl::historyCaughtup(asio::error_code const& ec,
                              << ledgerAbbrev(mLastClosedLedger);
 
         // Now replay remaining txs from buffered local network history.
-        bool applied = false;
         for (auto const& lcd : mSyncingLedgers)
         {
             if (lcd.mLedgerSeq < mLastClosedLedger.header.ledgerSeq + 1)
@@ -617,7 +623,6 @@ LedgerManagerImpl::historyCaughtup(asio::error_code const& ec,
                     << ", tx_count=" << lcd.mTxSet->size()
                     << ", sv: " << stellarValueToString(lcd.mValue) << "]";
                 closeLedger(lcd);
-                applied = true;
             }
             else
             {
@@ -820,7 +825,10 @@ LedgerManagerImpl::closeLedger(LedgerCloseData const& ledgerData)
     hm.logAndUpdateStatus(true);
 
     // step 4
-    mApp.getBucketManager().forgetUnreferencedBuckets();
+    if (getState() != LM_CATCHING_UP_STATE)
+    {
+        mApp.getBucketManager().forgetUnreferencedBuckets();
+    }
 }
 
 void
@@ -843,7 +851,6 @@ LedgerManagerImpl::checkDbState()
     std::unordered_map<AccountID, std::vector<DataFrame::pointer>> datas;
     datas = DataFrame::loadAllData(getDatabase());
 
-
     for (auto& i : aData)
     {
         auto const& a = i.second->getAccount();
@@ -862,7 +869,7 @@ LedgerManagerImpl::checkDbState()
         }
 
         auto itDatas = datas.find(i.first);
-        if(itDatas != datas.end())
+        if (itDatas != datas.end())
         {
             actualSubEntries += itDatas->second.size();
         }
@@ -872,7 +879,7 @@ LedgerManagerImpl::checkDbState()
             throw std::runtime_error(
                 fmt::format("Mismatch in number of subentries for account {}: "
                             "account says {} but found {}",
-                            PubKeyUtils::toStrKey(i.first), a.numSubEntries,
+                            KeyUtils::toStrKey(i.first), a.numSubEntries,
                             actualSubEntries));
         }
     }
@@ -882,7 +889,7 @@ LedgerManagerImpl::checkDbState()
         {
             throw std::runtime_error(
                 fmt::format("Unexpected trust line found for account {}",
-                            PubKeyUtils::toStrKey(tl.first)));
+                            KeyUtils::toStrKey(tl.first)));
         }
     }
     for (auto& of : offers)
@@ -891,7 +898,7 @@ LedgerManagerImpl::checkDbState()
         {
             throw std::runtime_error(
                 fmt::format("Unexpected offer found for account {}",
-                            PubKeyUtils::toStrKey(of.first)));
+                            KeyUtils::toStrKey(of.first)));
         }
     }
 }

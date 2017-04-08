@@ -5,11 +5,11 @@
 // of this distribution or at http://www.apache.org/licenses/LICENSE-2.0
 
 #include "util/asio.h"
-#include "xdrpp/message.h"
-#include "overlay/StellarXDR.h"
-#include "util/Timer.h"
 #include "database/Database.h"
+#include "overlay/StellarXDR.h"
 #include "util/NonCopyable.h"
+#include "util/Timer.h"
+#include "xdrpp/message.h"
 
 namespace medida
 {
@@ -127,10 +127,12 @@ class Peer : public std::enable_shared_from_this<Peer>,
     medida::Meter& mDropInRecvHelloSelfMeter;
     medida::Meter& mDropInRecvHelloPeerIDMeter;
     medida::Meter& mDropInRecvHelloCertMeter;
+    medida::Meter& mDropInRecvHelloBanMeter;
     medida::Meter& mDropInRecvHelloNetMeter;
     medida::Meter& mDropInRecvHelloPortMeter;
     medida::Meter& mDropInRecvAuthUnexpectedMeter;
     medida::Meter& mDropInRecvAuthRejectMeter;
+    medida::Meter& mDropInRecvAuthInvalidPeerMeter;
     medida::Meter& mDropInRecvErrorMeter;
 
     bool shouldAbort() const;

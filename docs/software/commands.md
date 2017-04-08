@@ -16,6 +16,7 @@ stellar-core can be controlled via the following commands.
 `$ stellar-core --convertid SDQVDISRYN2JXBS7ICL7QJAEKB3HWBJFP2QECXG7GZICAHBK4UNJCWK2`
 
 * **--dumpxdr FILE**:  Dumps the given XDR file and then exits.
+* **--loadxdr FILE**:  Load an XDR bucket file, for testing.
 * **--forcescp**: This command is used to start a network from scratch or when a 
 network has lost quorum because of failed nodes or otherwise. It sets a flag in 
 the database. The next time stellar-core is run, stellar-core will start 
@@ -25,11 +26,32 @@ forcescp doesn't change the requirements for quorum so although this node will e
 * **--fuzz FILE**: Run a single fuzz input and exit.
 * **--genfuzz FILE**:  Generate a random fuzzer input file.
 * **--genseed**: Generate and print a random public/private key and then exit.
+* **--inferquorum**:   Print a potential quorum set inferred from history.
+* **--checkquorum**:   Check quorum intersection from history to ensure there is closure over all the validators in the network.
+* **--graphquorum**:   Print a quorum set graph from history.
 * **--offlineinfo**: Returns an output similar to `--c info` for an offline instance
 * **--ll LEVEL**: Set the log level. It is redundant with `--c ll` but we need this form if you want to change the log level during test runs.
 * **--metric METRIC**: Report metric METRIC on exit. Used for gathering a metric cumulatively during a test run.
 * **--newdb**: Clears the local database and resets it to the genesis ledger. If you connect to the network after that it will catch up from scratch. 
 * **--newhist ARCH**:  Initialize the named history archive ARCH. ARCH should be one of the history archives you have specified in the stellar-core.cfg. This will write a `.well-known/stellar-history.json` file in the archive root.
+* **--printtxn FILE**:  Pretty-print a binary file containing a
+  `TransactionEnvelope`.  If FILE is "-", the transaction is read from
+  standard input.
+* **--signtxn FILE**:  Add a digital signature to a transaction
+  envelope stored in binary format in FILE, and send the result to
+  standard output (which should be redirected to a file or piped
+  through a tool such as `base64`).  The private signing key is read
+  from standard input, unless FILE is "-" in which case the
+  transaction envelope is read from standard input and the signing key
+  is read from `/dev/tty`.  In either event, if the signing key
+  appears to be coming from a terminal, stellar-core disables echo.
+  Note that if you do not have a STELLAR_NETWORK_ID environment
+  variable, then before this argument you must specify the --netid
+  option.
+* **--netid STRING**:  The --signtxn option requires a particular
+  network to sign for.  For example, the production stellar network is
+  "`Public Global Stellar Network ; September 2015`" while the test
+  network is "`Test SDF Network ; September 2015`".
 * **--test**: Run all the unit tests. For [further info](https://github.com/philsquared/Catch/blob/master/docs/command-line.md) on possible options for test. For example this will run just the "Herder" tests and stop after the first failure: `stellar-core --test -a [Herder]` 
 * **--version**: Print version info and then exit.
 

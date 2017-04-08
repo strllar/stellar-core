@@ -103,7 +103,8 @@ Project {
                 "/lib/util/format.cc",
                 "/lib/util/getopt_long.c",
                 "/lib/util/crc16.cpp",
-                "/lib/util/uint128_t.cpp"
+                "/lib/util/uint128_t.cpp",
+                "/lib/"
             ]
         }
 
@@ -125,6 +126,7 @@ Project {
                 "/process/*.cpp",
                 "/work/*.cpp",
                 "/util/*.cpp",
+                "/test/*.cpp"
             ]
         }
     }

@@ -2,19 +2,20 @@
 // under the Apache License, Version 2.0. See the COPYING file at the root
 // of this distribution or at http://www.apache.org/licenses/LICENSE-2.0
 
-#include "main/test.h"
-#include "util/Logging.h"
-#include "lib/catch.hpp"
 #include "crypto/Hex.h"
+#include "crypto/KeyUtils.h"
+#include "crypto/Random.h"
 #include "crypto/SHA.h"
 #include "crypto/SecretKey.h"
-#include "crypto/Random.h"
 #include "crypto/StrKey.h"
+#include "lib/catch.hpp"
+#include "test/test.h"
+#include "util/Logging.h"
 #include "util/basen.h"
 #include <autocheck/autocheck.hpp>
-#include <sodium.h>
 #include <map>
 #include <regex>
+#include <sodium.h>
 
 using namespace stellar;
 
@@ -52,8 +53,7 @@ TEST_CASE("hex tests", "[crypto]")
 
     // Do 20 random round-trip tests.
     autocheck::check<std::vector<uint8_t>>(
-        [](std::vector<uint8_t> v)
-        {
+        [](std::vector<uint8_t> v) {
             auto enc = binToHex(v);
             auto dec = hexToBin(enc);
             LOG(DEBUG) << "random round-trip hex: \"" << enc << "\"";
@@ -132,7 +132,7 @@ TEST_CASE("sign tests", "[crypto]")
     auto sk = SecretKey::random();
     auto pk = sk.getPublicKey();
     LOG(DEBUG) << "generated random secret key seed: " << sk.getStrKeySeed();
-    LOG(DEBUG) << "corresponding public key: " << PubKeyUtils::toStrKey(pk);
+    LOG(DEBUG) << "corresponding public key: " << KeyUtils::toStrKey(pk);
 
     CHECK(SecretKey::fromStrKeySeed(sk.getStrKeySeed()) == sk);
 

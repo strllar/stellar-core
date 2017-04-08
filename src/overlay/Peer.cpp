@@ -4,11 +4,11 @@
 
 #include "overlay/Peer.h"
 
+#include "BanManager.h"
 #include "crypto/Hex.h"
-#include "crypto/SHA.h"
 #include "crypto/Random.h"
+#include "crypto/SHA.h"
 #include "database/Database.h"
-#include "overlay/StellarXDR.h"
 #include "herder/Herder.h"
 #include "herder/TxSetFrame.h"
 #include "main/Application.h"
@@ -17,15 +17,16 @@
 #include "overlay/OverlayManager.h"
 #include "overlay/PeerAuth.h"
 #include "overlay/PeerRecord.h"
+#include "overlay/StellarXDR.h"
 #include "util/Logging.h"
+#include "util/SociNoWarnings.h"
 
+#include "medida/meter.h"
 #include "medida/metrics_registry.h"
 #include "medida/timer.h"
-#include "medida/meter.h"
 
 #include "xdrpp/marshal.h"
 
-#include <soci.h>
 #include <time.h>
 
 // LATER: need to add some way of docking peers that are misbehaving by sending
@@ -149,6 +150,8 @@ Peer::Peer(Application& app, PeerRole role)
           {"overlay", "drop", "recv-hello-peerid"}, "drop"))
     , mDropInRecvHelloCertMeter(app.getMetrics().NewMeter(
           {"overlay", "drop", "recv-hello-cert"}, "drop"))
+    , mDropInRecvHelloBanMeter(app.getMetrics().NewMeter(
+          {"overlay", "drop", "recv-hello-ban"}, "drop"))
     , mDropInRecvHelloNetMeter(app.getMetrics().NewMeter(
           {"overlay", "drop", "recv-hello-net"}, "drop"))
     , mDropInRecvHelloPortMeter(app.getMetrics().NewMeter(
@@ -157,6 +160,8 @@ Peer::Peer(Application& app, PeerRole role)
           {"overlay", "drop", "recv-auth-unexpected"}, "drop"))
     , mDropInRecvAuthRejectMeter(app.getMetrics().NewMeter(
           {"overlay", "drop", "recv-auth-reject"}, "drop"))
+    , mDropInRecvAuthInvalidPeerMeter(app.getMetrics().NewMeter(
+          {"overlay", "drop", "recv-auth-invalid-peer"}, "drop"))
     , mDropInRecvErrorMeter(
           app.getMetrics().NewMeter({"overlay", "drop", "recv-error"}, "drop"))
 {
@@ -226,10 +231,9 @@ Peer::startIdleTimer()
 
     auto self = shared_from_this();
     mIdleTimer.expires_from_now(std::chrono::seconds(getIOTimeoutSeconds()));
-    mIdleTimer.async_wait([self](asio::error_code const& error)
-                          {
-                              self->idleTimerExpired(error);
-                          });
+    mIdleTimer.async_wait([self](asio::error_code const& error) {
+        self->idleTimerExpired(error);
+    });
 }
 
 void
@@ -287,8 +291,8 @@ Peer::connectHandler(asio::error_code const& error)
 {
     if (error)
     {
-        CLOG(WARNING, "Overlay")
-            << " connectHandler error: " << error.message();
+        CLOG(WARNING, "Overlay") << " connectHandler error: "
+                                 << error.message();
         mDropInConnectHandlerMeter.Mark();
         drop();
     }
@@ -421,7 +425,8 @@ msgSummary(StellarMessage const& msg)
     case SCP_QUORUMSET:
         return "SCP_QSET";
     case SCP_MESSAGE:
-        switch (msg.envelope().statement.pledges.type()) {
+        switch (msg.envelope().statement.pledges.type())
+        {
         case SCP_ST_PREPARE:
             return "SCP::PREPARE";
         case SCP_ST_CONFIRM:
@@ -441,11 +446,12 @@ void
 Peer::sendMessage(StellarMessage const& msg)
 {
     if (Logging::logTrace("Overlay"))
-        CLOG(TRACE, "Overlay") << "("
-                               << mApp.getConfig().toShortString(
-                                   mApp.getConfig().NODE_SEED.getPublicKey())
-                               << ") send: " << msgSummary(msg) << " to : "
-                               << mApp.getConfig().toShortString(mPeerID);
+        CLOG(TRACE, "Overlay")
+            << "("
+            << mApp.getConfig().toShortString(
+                   mApp.getConfig().NODE_SEED.getPublicKey())
+            << ") send: " << msgSummary(msg)
+            << " to : " << mApp.getConfig().toShortString(mPeerID);
 
     switch (msg.type())
     {
@@ -590,11 +596,12 @@ Peer::recvMessage(StellarMessage const& stellarMsg)
     }
 
     if (Logging::logTrace("Overlay"))
-        CLOG(TRACE, "Overlay") << "("
-                               << mApp.getConfig().toShortString(
-                                   mApp.getConfig().NODE_SEED.getPublicKey())
-                               << ") recv: " << msgSummary(stellarMsg) << " from:"
-                               << mApp.getConfig().toShortString(mPeerID);
+        CLOG(TRACE, "Overlay")
+            << "("
+            << mApp.getConfig().toShortString(
+                   mApp.getConfig().NODE_SEED.getPublicKey())
+            << ") recv: " << msgSummary(stellarMsg)
+            << " from:" << mApp.getConfig().toShortString(mPeerID);
 
     if (!isAuthenticated() && (stellarMsg.type() != HELLO) &&
         (stellarMsg.type() != AUTH) && (stellarMsg.type() != ERROR_MSG))
@@ -774,8 +781,8 @@ Peer::recvGetSCPQuorumSet(StellarMessage const& msg)
     else
     {
         if (Logging::logTrace("Overlay"))
-            CLOG(TRACE, "Overlay")
-                << "No quorum set: " << hexAbbrev(msg.qSetHash());
+            CLOG(TRACE, "Overlay") << "No quorum set: "
+                                   << hexAbbrev(msg.qSetHash());
         sendDontHave(SCP_QUORUMSET, msg.qSetHash());
         // do we want to ask other people for it?
     }
@@ -792,18 +799,20 @@ Peer::recvSCPMessage(StellarMessage const& msg)
 {
     SCPEnvelope const& envelope = msg.envelope();
     if (Logging::logTrace("Overlay"))
-        CLOG(TRACE, "Overlay") << "recvSCPMessage node: "
-                               << mApp.getConfig().toShortString(
-                                   msg.envelope().statement.nodeID);
+        CLOG(TRACE, "Overlay")
+            << "recvSCPMessage node: "
+            << mApp.getConfig().toShortString(msg.envelope().statement.nodeID);
 
     mApp.getOverlayManager().recvFloodedMsg(msg, shared_from_this());
 
     auto type = msg.envelope().statement.pledges.type();
-    auto t =
-        (type == SCP_ST_PREPARE ? mRecvSCPPrepareTimer.TimeScope() :
-         (type == SCP_ST_CONFIRM ? mRecvSCPConfirmTimer.TimeScope() :
-          (type == SCP_ST_EXTERNALIZE ? mRecvSCPExternalizeTimer.TimeScope() :
-           (mRecvSCPNominateTimer.TimeScope()))));
+    auto t = (type == SCP_ST_PREPARE
+                  ? mRecvSCPPrepareTimer.TimeScope()
+                  : (type == SCP_ST_CONFIRM
+                         ? mRecvSCPConfirmTimer.TimeScope()
+                         : (type == SCP_ST_EXTERNALIZE
+                                ? mRecvSCPExternalizeTimer.TimeScope()
+                                : (mRecvSCPNominateTimer.TimeScope()))));
 
     mApp.getHerder().recvSCPEnvelope(envelope);
 }
@@ -849,6 +858,15 @@ Peer::recvError(StellarMessage const& msg)
 void
 Peer::noteHandshakeSuccessInPeerRecord()
 {
+    if (getIP().empty() || getRemoteListeningPort() == 0)
+    {
+        CLOG(ERROR, "Overlay") << "unable to handshake with " << getIP() << ":"
+                               << getRemoteListeningPort();
+        mDropInRecvAuthInvalidPeerMeter.Mark();
+        drop();
+        return;
+    }
+
     auto pr = PeerRecord::loadPeerRecord(mApp.getDatabase(), getIP(),
                                          getRemoteListeningPort());
     if (pr)
@@ -884,6 +902,14 @@ Peer::recvHello(Hello const& elo)
     {
         CLOG(ERROR, "Overlay") << "failed to verify remote peer auth cert";
         mDropInRecvHelloCertMeter.Mark();
+        drop();
+        return;
+    }
+
+    if (mApp.getBanManager().isBanned(elo.peerID))
+    {
+        CLOG(ERROR, "Overlay") << "Node is banned";
+        mDropInRecvHelloBanMeter.Mark();
         drop();
         return;
     }
@@ -983,9 +1009,17 @@ Peer::recvHello(Hello const& elo)
 void
 Peer::recvAuth(StellarMessage const& msg)
 {
+    if (mState != GOT_HELLO)
+    {
+        CLOG(INFO, "Overlay") << "Unexpected AUTH message before HELLO";
+        mDropInRecvAuthUnexpectedMeter.Mark();
+        drop(ERR_MISC, "out-of-order AUTH message");
+        return;
+    }
+
     if (isAuthenticated())
     {
-        CLOG(ERROR, "Overlay") << "Unexpected AUTH message";
+        CLOG(INFO, "Overlay") << "Unexpected AUTH message";
         mDropInRecvAuthUnexpectedMeter.Mark();
         drop(ERR_MISC, "out-of-order AUTH message");
         return;
