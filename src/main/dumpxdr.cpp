@@ -7,7 +7,7 @@
 #include <regex>
 #include <xdrpp/printer.h>
 
-#if !defined(USE_TERMIOS) && !MSVC
+#if !defined(USE_TERMIOS) && !_WIN32
 #define HAVE_TERMIOS 1
 #endif
 #if HAVE_TERMIOS
@@ -20,13 +20,13 @@ extern "C" {
 }
 #endif // HAVE_TERMIOS
 
-#if MSVC
+#if _WIN32
 #include <BaseTsd.h>
 #include <fcntl.h>
 #include <io.h>
 #define isatty _isatty
 typedef SSIZE_T ssize_t;
-#endif // MSVC
+#endif // _WIN32
 
 namespace stellar
 {
