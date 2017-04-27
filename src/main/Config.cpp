@@ -25,7 +25,7 @@ Config::Config() : NODE_SEED(SecretKey::random())
 
     // non configurable
     FORCE_SCP = false;
-    LEDGER_PROTOCOL_VERSION = 6;
+    LEDGER_PROTOCOL_VERSION = 8;
 
     OVERLAY_PROTOCOL_MIN_VERSION = 5;
     OVERLAY_PROTOCOL_VERSION = 5;
@@ -68,7 +68,7 @@ Config::Config() : NODE_SEED(SecretKey::random())
     PARANOID_MODE = false;
     NODE_IS_VALIDATOR = false;
 
-    DATABASE = "sqlite3://:memory:";
+    DATABASE = SecretValue{"sqlite3://:memory:"};
     NTP_SERVER = "pool.ntp.org";
 }
 
@@ -569,7 +569,7 @@ Config::load(std::string const& filename)
                 {
                     throw std::invalid_argument("invalid DATABASE");
                 }
-                DATABASE = item.second->as<std::string>()->value();
+                DATABASE = SecretValue{item.second->as<std::string>()->value()};
             }
             else if (item.first == "PARANOID_MODE")
             {

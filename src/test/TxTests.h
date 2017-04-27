@@ -33,6 +33,7 @@ struct ThresholdSetter
     optional<uint8_t> highThreshold;
 };
 
+bool throwingApplyCheck(TransactionFramePtr tx, LedgerDelta& delta, Application& app);
 bool applyCheck(TransactionFramePtr tx, LedgerDelta& delta, Application& app);
 
 void checkEntry(LedgerEntry const& le, Application& app);
@@ -161,6 +162,10 @@ uint64_t applyCreatePassiveOffer(Application& app, SecretKey const& source,
                                  Price const& price, int64_t amount,
                                  SequenceNumber seq,
                                  ManageOfferEffect expectedEffect);
+Operation
+createSetOptionsOp(AccountID* inflationDest,
+                 uint32_t* setFlags, uint32_t* clearFlags,
+                 ThresholdSetter* thrs, Signer* signer, std::string* homeDomain);
 
 TransactionFramePtr createSetOptions(
     Hash const& networkID, SecretKey const& source, SequenceNumber seq,
@@ -173,6 +178,8 @@ void applySetOptions(Application& app, SecretKey const& source,
                      ThresholdSetter* thrs, Signer* signer,
                      std::string* homeDomain);
 
+Operation createInflationOp();
+
 TransactionFramePtr createInflation(Hash const& networkID,
                                     SecretKey const& from, SequenceNumber seq);
 OperationResult
@@ -181,7 +188,8 @@ applyInflation(Application& app, SecretKey const& from, SequenceNumber seq,
 
 Operation createMergeOp(SecretKey const* from, PublicKey const& dest);
 
-Operation createCreateAccountOp(SecretKey const* from, PublicKey const& dest,int64_t amount);
+Operation createCreateAccountOp(SecretKey const* from, PublicKey const& dest,
+                                int64_t amount);
 
 TransactionFramePtr createAccountMerge(Hash const& networkID,
                                        SecretKey const& source,

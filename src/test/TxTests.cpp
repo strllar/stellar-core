@@ -418,7 +418,9 @@ applyAllowTrust(Application& app, SecretKey const& from,
             ALLOW_TRUST_SUCCESS);
 }
 
-Operation createCreateAccountOp(SecretKey const* from, PublicKey const& dest, int64_t amount)
+Operation
+createCreateAccountOp(SecretKey const* from, PublicKey const& dest,
+                      int64_t amount)
 {
     Operation op;
     op.body.type(CREATE_ACCOUNT);
@@ -433,7 +435,7 @@ TransactionFramePtr
 createCreateAccountTx(Hash const& networkID, SecretKey const& from,
                       SecretKey const& to, SequenceNumber seq, int64_t amount)
 {
-    Operation op= createCreateAccountOp(nullptr,to.getPublicKey(),amount);
+    Operation op = createCreateAccountOp(nullptr, to.getPublicKey(), amount);
 
     return transactionFromOperation(networkID, from, seq, op);
 }
@@ -1041,9 +1043,8 @@ applyCreatePassiveOffer(Application& app, SecretKey const& source,
                                                     : 0;
 }
 
-TransactionFramePtr
-createSetOptions(Hash const& networkID, SecretKey const& source,
-                 SequenceNumber seq, AccountID* inflationDest,
+Operation
+createSetOptionsOp(AccountID* inflationDest,
                  uint32_t* setFlags, uint32_t* clearFlags,
                  ThresholdSetter* thrs, Signer* signer, std::string* homeDomain)
 {
@@ -1097,7 +1098,16 @@ createSetOptions(Hash const& networkID, SecretKey const& source,
         setOp.homeDomain.activate() = *homeDomain;
     }
 
-    return transactionFromOperation(networkID, source, seq, op);
+    return op;
+}
+
+TransactionFramePtr
+createSetOptions(Hash const& networkID, SecretKey const& source,
+                 SequenceNumber seq, AccountID* inflationDest,
+                 uint32_t* setFlags, uint32_t* clearFlags,
+                 ThresholdSetter* thrs, Signer* signer, std::string* homeDomain)
+{
+    return transactionFromOperation(networkID, source, seq, createSetOptionsOp(inflationDest, setFlags, clearFlags, thrs, signer, homeDomain));
 }
 
 void
@@ -1146,14 +1156,20 @@ applySetOptions(Application& app, SecretKey const& source, SequenceNumber seq,
     REQUIRE(SET_OPTIONS_SUCCESS == result);
 }
 
-TransactionFramePtr
-createInflation(Hash const& networkID, SecretKey const& from,
-                SequenceNumber seq)
+Operation
+createInflationOp()
 {
     Operation op;
     op.body.type(INFLATION);
 
-    return transactionFromOperation(networkID, from, seq, op);
+    return op;
+}
+
+TransactionFramePtr
+createInflation(Hash const& networkID, SecretKey const& from,
+                SequenceNumber seq)
+{
+    return transactionFromOperation(networkID, from, seq, createInflationOp());
 }
 
 OperationResult
