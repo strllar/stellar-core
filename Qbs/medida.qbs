@@ -14,24 +14,7 @@ StaticLibrary {
     Group {
         name: "C++ Sources"
         prefix: srcDirectory + "/medida/"
-        files: [
-            "counter.cc",
-            "histogram.cc",
-            "meter.cc",
-            "metrics_registry.cc",
-            "metric_name.cc",
-            "metric_processor.cc",
-            "reporting/abstract_polling_reporter.cc",
-            "reporting/console_reporter.cc",
-            "reporting/json_reporter.cc",
-            "reporting/util.cc",
-            "stats/ewma.cc",
-            "stats/exp_decay_sample.cc",
-            "stats/snapshot.cc",
-            "stats/uniform_sample.cc",
-            "timer.cc",
-            "timer_context.cc"
-        ]
+        files: "**/*.cc"
     }
 
     Export {

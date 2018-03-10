@@ -61,7 +61,7 @@ Project {
     CppApplication {
         name: "xdrc"
         Depends {name: "stellar_qbs_module"}
-        Depends { name: "build_endian_header"}
+        Depends {name: "build_endian_header"}
         readonly property path baseDirectory: stellar_qbs_module.rootDirectory + "/lib/xdrpp"
 
         Properties {
@@ -100,11 +100,7 @@ Project {
         Group {
             name: "C++ Sources"
             prefix: baseDirectory + "/xdrc/"
-            files:[
-                "gen_hh.cc",
-                "gen_server.cc",
-                "xdrc.cc"
-            ]
+            files: "*.cc"
         }
 
         Group {

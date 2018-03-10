@@ -10,15 +10,8 @@ Project {
         Depends {name: "stellar_qbs_module"}
         Group {
             name: "XDR files"
-            prefix: stellar_qbs_module.srcDirectory
-            files: [
-                "/xdr/Stellar-SCP.x",
-                "/xdr/Stellar-types.x",
-                "/xdr/Stellar-ledger-entries.x",
-                "/xdr/Stellar-transaction.x",
-                "/xdr/Stellar-ledger.x",
-                "/xdr/Stellar-overlay.x"
-            ]
+            prefix: stellar_qbs_module.srcDirectory + "/xdr/"
+            files: "*.x"
             fileTags: "xdr-file"
         }
 
@@ -102,47 +95,19 @@ Project {
 
         Group {
             name: "3rd-party C++ Sources"
-            prefix: stellar_qbs_module.rootDirectory
+            prefix: stellar_qbs_module.rootDirectory + "/lib"
             files:[
-                "/lib/asio/src/asio.cpp",
-                "/lib/http/connection.cpp",
-                "/lib/http/connection_manager.cpp",
-                "/lib/http/HttpClient.cpp",
-                "/lib/http/reply.cpp",
-                "/lib/http/request_parser.cpp",
-                "/lib/http/server.cpp",
-                "/lib/json/jsoncpp.cpp",
-                "/lib/util/format.cc",
-                "/lib/util/getopt_long.c",
-                "/lib/util/crc16.cpp",
-                "/lib/util/uint128_t.cpp",
-                "/lib/util/easylogging++.cc",
-                "/lib/"
-            ]
+                "/asio/src/asio.cpp",
+                "/json/jsoncpp.cpp",
+                "/http/*.cpp",
+                "/util/*.c*"            ]
         }
 
         Group {
             name: "C++ Sources"
             prefix: stellar_qbs_module.srcDirectory
             files:[
-                "/bucket/*.cpp",
-                "/catchup/*.cpp",
-                "/crypto/*.cpp",
-                "/database/*.cpp",
-                "/herder/*.cpp",
-                "/history/*.cpp",
-                "/historywork/*.cpp",
-                "/invariant/*.cpp",
-                "/ledger/*.cpp",
-                "/main/*.cpp",
-                "/overlay/*.cpp",
-                "/scp/*.cpp",
-                "/simulation/*.cpp",
-                "/transactions/*.cpp",
-                "/process/*.cpp",
-                "/work/*.cpp",
-                "/util/*.cpp",
-                "/test/*.cpp"
+                "/**/*.cpp"
             ]
         }
     }
