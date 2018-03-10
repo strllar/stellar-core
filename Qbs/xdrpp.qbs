@@ -8,15 +8,19 @@ Project {
 
     Product {
         name: "build_endian_header"
-        type: "hpp"
-        files: [buildEndianFile]
+        type: "hpp"        
+
+        Group {
+            files: buildEndianFile
+            fileTags: "endian_header"
+        }
 
         Depends{name: "stellar_qbs_module"}
 
         readonly property path buildEndianFile: stellar_qbs_module.rootDirectory + "/lib/xdrpp" +"/xdrpp/build_endian.h.in"
 
-        Transformer {
-            inputs: [buildEndianFile]
+        Rule {
+            inputs: ["endian_header"]
             Artifact {
                 filePath: "xdrpp/build_endian.h"
                 fileTags: "hpp"
@@ -41,6 +45,7 @@ Project {
                     file.truncate();
                     file.write(content);
                     file.close();
+
                 }
                 return cmd;
             }
@@ -58,8 +63,38 @@ Project {
         Depends {name: "stellar_qbs_module"}
         Depends { name: "build_endian_header"}
         readonly property path baseDirectory: stellar_qbs_module.rootDirectory + "/lib/xdrpp"
-        cpp.includePaths: [baseDirectory, baseDirectory+"/msvc_xdrpp/include"]
-        cpp.windowsApiCharacterSet: "mbcs"
+
+        Properties {
+            condition: qbs.targetOS.contains("windows")
+            cpp.includePaths: [baseDirectory, baseDirectory+"/msvc_xdrpp/include"]
+            cpp.windowsApiCharacterSet: "mbcs"
+        }
+        Properties {
+            condition: qbs.targetOS.contains("unix")
+            cpp.includePaths: [baseDirectory, destinationDirectory]
+        }
+        Rule {
+            multiplex: true
+            condition: qbs.targetOS.contains("unix")
+            Artifact {
+                filePath: "xdrpp/config.h"
+                fileTags: "hpp"
+            }
+            prepare: {
+                var cmd = new JavaScriptCommand();
+                cmd.description = "generating config.h";
+                cmd.highlight = "codegen";
+                cmd.sourceCode = function() {
+                    var content = "\n#define CPP_COMMAND \"cpp\" \n#define PACKAGE \"xdrpp\"\n#define PACKAGE_NAME \"xdrpp\"\n#define PACKAGE_VERSION \"0\"\n#define WORDS_BIGENDIAN 0\n",
+                    file = new TextFile(output.filePath, TextFile.WriteOnly);
+                    file.truncate();
+                    file.write(content);
+                    file.close();
+
+                }
+                return cmd;
+            }
+        }
 
         files: [baseDirectory+"/compat/getopt_long.c"]
         Group {

@@ -59,33 +59,45 @@ Project {
         Depends {name: "libsoci-sqlite3"}
         Depends {name: "libsodium"}
 
-        cpp.windowsApiCharacterSet: "mbcs"
-        cpp.defines: [
-            "NOMINMAX",
-            "ASIO_STANDALONE",
-            "ASIO_HAS_THREADS",
-            //"USE_POSTGRES",
-            "_WINSOCK_DEPRECATED_NO_WARNINGS",
-            "SODIUM_STATIC",
-            "ASIO_SEPARATE_COMPILATION",
-            "ASIO_ERROR_CATEGORY_NOEXCEPT=noexcept",
-            "_CRT_SECURE_NO_WARNINGS",
-            "_WIN32_WINNT=0x0501",
-            "WIN32",
-        ]
-
         cpp.includePaths: [
             stellar_qbs_module.srcDirectory,
             stellar_qbs_module.rootDirectory,
             stellar_qbs_module.rootDirectory + "/lib",
-            stellar_qbs_module.rootDirectory + "/Builds/VisualStudio2015/src/generated",
+            stellar_qbs_module.rootDirectory + "/Builds/VisualStudio/src/generated",
             stellar_qbs_module.rootDirectory + "/lib/autocheck/include",
             stellar_qbs_module.rootDirectory + "/lib/cereal/include",
             stellar_qbs_module.rootDirectory + "/lib/asio/include",
         ]
         Properties {
             condition: qbs.targetOS.contains("windows")
+            cpp.windowsApiCharacterSet: "mbcs"
+            cpp.defines: [
+                "NOMINMAX",
+                "ASIO_STANDALONE",
+                "ASIO_HAS_THREADS",
+                //"USE_POSTGRES",
+                "_WINSOCK_DEPRECATED_NO_WARNINGS",
+                "SODIUM_STATIC",
+                "ASIO_SEPARATE_COMPILATION",
+                "ASIO_ERROR_CATEGORY_NOEXCEPT=noexcept",
+                "_CRT_SECURE_NO_WARNINGS",
+                "_WIN32_WINNT=0x0501",
+                "WIN32",
+            ]
             cpp.dynamicLibraries:  ["ws2_32", "Psapi", "Mswsock"]
+        }
+        Properties {
+            condition: qbs.targetOS.contains("unix")
+            cpp.defines: [
+                "NOMINMAX",
+                "ASIO_STANDALONE",
+                "ASIO_HAS_THREADS",
+                //"USE_POSTGRES",
+                "SODIUM_STATIC",
+                "ASIO_SEPARATE_COMPILATION",
+                "ASIO_ERROR_CATEGORY_NOEXCEPT=noexcept",
+            ]
+            cpp.dynamicLibraries:  ["dl", "pthread"]
         }
 
         Group {
@@ -104,6 +116,7 @@ Project {
                 "/lib/util/getopt_long.c",
                 "/lib/util/crc16.cpp",
                 "/lib/util/uint128_t.cpp",
+                "/lib/util/easylogging++.cc",
                 "/lib/"
             ]
         }
@@ -113,10 +126,13 @@ Project {
             prefix: stellar_qbs_module.srcDirectory
             files:[
                 "/bucket/*.cpp",
+                "/catchup/*.cpp",
                 "/crypto/*.cpp",
                 "/database/*.cpp",
                 "/herder/*.cpp",
                 "/history/*.cpp",
+                "/historywork/*.cpp",
+                "/invariant/*.cpp",
                 "/ledger/*.cpp",
                 "/main/*.cpp",
                 "/overlay/*.cpp",
