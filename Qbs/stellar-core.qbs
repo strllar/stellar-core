@@ -1,5 +1,6 @@
 import qbs
 import qbs.FileInfo
+import qbs.TextFile
 
 Project {
 
@@ -109,6 +110,45 @@ Project {
             files:[
                 "/**/*.cpp"
             ]
+        }
+
+        Group {
+            files: stellarCoreVersion
+            fileTags: "corever_template"
+        }
+
+        readonly property path stellarCoreVersion: stellar_qbs_module.rootDirectory + "/src/main" +"/StellarCoreVersion.cpp.in"
+
+        Rule {
+            inputs: ["corever_template"]
+            Artifact {
+                filePath: "src/main/StellarCoreVersion.cpp"
+                fileTags: "cpp"
+            }
+            prepare: {
+                var cmd = new JavaScriptCommand();
+                cmd.description = "generating build_endian.h";
+                cmd.highlight = "codegen";
+                cmd.onWindows = (product.moduleProperty("qbs", "targetOS").contains("windows"));
+                cmd.sourceCode = function() {
+                    var file = new TextFile(input.filePath);
+                    var content = file.readAll();
+                    // replace quoted quotes
+                    content = content.replace(/\\\"/g, '"');
+                    // replace Windows line endings
+                    if (onWindows)
+                        content = content.replace(/\r\n/g, "\n");
+
+                    content = content.replace(/%%VERSION%%/, "sp-9.2.0")
+
+                    file = new TextFile(output.filePath, TextFile.WriteOnly);
+                    file.truncate();
+                    file.write(content);
+                    file.close();
+
+                }
+                return cmd;
+            }
         }
     }
 
