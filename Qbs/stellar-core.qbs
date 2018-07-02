@@ -50,8 +50,17 @@ Project {
         Depends {name: "libxdrpp"}
         Depends {name: "libmedida"}
         Depends {name: "libsoci"}
-        Depends {name: "libsoci-sqlite3"}
+        Depends {name: "libsoci_sqlite3"}
+        Depends {name: "libsoci_pgsql"; required: false}
         Depends {name: "libsodium"}
+
+        stellar_qbs_module.usePostgres: true
+        property stringList moredefs: []
+
+        property var x: {
+            console.warn("stellar-core : found libpq : "+ libsoci_pgsql.present)
+            console.warn("stellar-core : defines : "+ cpp.defines)
+        }
 
         cpp.includePaths: [
             stellar_qbs_module.srcDirectory,
@@ -62,6 +71,12 @@ Project {
             stellar_qbs_module.rootDirectory + "/lib/cereal/include",
             stellar_qbs_module.rootDirectory + "/lib/asio/include",
         ]
+
+        Properties {
+            condition: libsoci_pgsql.present
+            moredefs: ["USE_POSTGRES"]
+        }
+
         Properties {
             condition: qbs.targetOS.contains("windows")
             cpp.windowsApiCharacterSet: "mbcs"
@@ -69,7 +84,6 @@ Project {
                 "NOMINMAX",
                 "ASIO_STANDALONE",
                 "ASIO_HAS_THREADS",
-                //"USE_POSTGRES",
                 "_WINSOCK_DEPRECATED_NO_WARNINGS",
                 "SODIUM_STATIC",
                 "ASIO_SEPARATE_COMPILATION",
@@ -77,7 +91,7 @@ Project {
                 "_CRT_SECURE_NO_WARNINGS",
                 "_WIN32_WINNT=0x0501",
                 "WIN32",
-            ]
+            ].concat(moredefs)
             cpp.dynamicLibraries:  ["ws2_32", "Psapi", "Mswsock"]
         }
         Properties {
@@ -86,11 +100,10 @@ Project {
                 "NOMINMAX",
                 "ASIO_STANDALONE",
                 "ASIO_HAS_THREADS",
-                //"USE_POSTGRES",
                 "SODIUM_STATIC",
                 "ASIO_SEPARATE_COMPILATION",
                 "ASIO_ERROR_CATEGORY_NOEXCEPT=noexcept",
-            ]
+            ].concat(moredefs)
             cpp.dynamicLibraries:  ["dl", "pthread"]
         }
 

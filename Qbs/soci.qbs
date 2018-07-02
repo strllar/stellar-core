@@ -20,7 +20,7 @@ Project {
     }
 
     StaticLibrary {
-        name: "libsoci-sqlite3"
+        name: "libsoci_sqlite3"
         Depends{name: "cpp"}
         Depends{name: "stellar_qbs_module"}
         Depends{name: "sqlite3"}
@@ -33,18 +33,29 @@ Project {
         Group {
             name: "C++ Sources"
             prefix: srcDirectory + "/"
-            files: [
-                "blob.cpp",
-                "common.cpp",
-                "factory.cpp",
-                "row-id.cpp",
-                "session.cpp",
-                "standard-into-type.cpp",
-                "standard-use-type.cpp",
-                "statement.cpp",
-                "vector-into-type.cpp",
-                "vector-use-type.cpp"
-            ]
+            files: "*.cpp"
+        }
+    }
+
+    StaticLibrary {
+        name: "libsoci_pgsql"
+        Depends{name: "cpp"}
+        Depends{name: "stellar_qbs_module"}
+        Depends{name: "libsoci"}
+        readonly property path baseDirectory: stellar_qbs_module.rootDirectory + "/lib/soci"
+        readonly property path srcDirectory: baseDirectory + "/src/backends/postgresql"
+
+        stellar_qbs_module.usePostgres: true
+        property var x: {
+            console.warn("libsoci-pgsql: found libpq :"+stellar_qbs_module.libpq.found)
+        }
+
+        cpp.windowsApiCharacterSet: "mbcs"
+
+        Group {
+            name: "C++ Sources"
+            prefix: srcDirectory + "/"
+            files: "*.cpp"
         }
     }
 
