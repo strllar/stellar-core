@@ -9,12 +9,14 @@ Module {
     property bool usePostgres : false
 
     Depends {name: "cpp"}
-    cpp.cxxLanguageVersion: "c++11"
+    cpp.cxxLanguageVersion: "c++14"
     cpp.windowsApiCharacterSet: "mbcs" //no effect, product depends on this module should explicitly set this
 
     Probes.PkgConfigProbe {
         id: libpqProbe
-        executable: '/usr/bin/pkg-config'
+        //TODO: homebrew in macos
+        //executable: 'PKG_CONFIG_PATH=/usr/local/opt/libpq/lib/pkgconfig pkg-config'
+        executable: '/usr/local/bin/pkg-config'
         name: "libpq"
     }
 

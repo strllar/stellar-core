@@ -15,6 +15,7 @@ StaticLibrary {
     cpp.includePaths: [srcDirectory + "/include/sodium", destinationDirectory + "/sodium"]
 
     Group {
+        name: "version.h"
         files: versionHeaderFile
         fileTags: "version_header"
     }

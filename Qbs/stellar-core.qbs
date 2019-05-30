@@ -4,6 +4,8 @@ import qbs.TextFile
 
 Project {
 
+    name: "stellar-core-qbs"
+
     Product {
         name: "generated-xdr-header"
         type: "hpp"
@@ -24,6 +26,7 @@ Project {
 
         Rule {
             inputs: "xdr-file"
+
             Artifact {
                 filePath: "xdr/"+input.fileName.replace(/\.x$/, ".h")
                 fileTags: ["hpp"]
@@ -34,7 +37,7 @@ Project {
                     var dep = product.dependencies[i];
                     if (dep.name != "xdrc")
                         continue;
-                    xdrc = dep.buildDirectory + "/" + dep.targetName;
+                    xdrc = dep.targetBinPath + "/" + dep.targetName;
                 }
                 var cmd = new Command(xdrc, ["-hh", "-o", output.filePath, input.filePath])
                 cmd.description = "xdrc " + input.filePath
@@ -54,12 +57,13 @@ Project {
         Depends {name: "libsoci_pgsql"; required: false}
         Depends {name: "libsodium"}
 
-        stellar_qbs_module.usePostgres: true
-        property stringList moredefs: []
+        property stringList moredefs: ["BUILD_TESTS"]
 
         property var x: {
-            console.warn("stellar-core : found libpq : "+ libsoci_pgsql.present)
+            console.warn("stellar-core : use libpq : "+ libsoci_pgsql.present)
+            console.warn("stellar-core : std : "+ cpp.cxxLanguageVersion)
             console.warn("stellar-core : defines : "+ cpp.defines)
+
         }
 
         cpp.includePaths: [
@@ -69,13 +73,15 @@ Project {
             stellar_qbs_module.rootDirectory + "/Builds/VisualStudio/src/generated",
             stellar_qbs_module.rootDirectory + "/lib/autocheck/include",
             stellar_qbs_module.rootDirectory + "/lib/cereal/include",
-            stellar_qbs_module.rootDirectory + "/lib/asio/include",
+            stellar_qbs_module.rootDirectory + "/lib/asio/asio/include",
         ]
 
         Properties {
             condition: libsoci_pgsql.present
-            moredefs: ["USE_POSTGRES"]
+            moredefs: outer.concat("USE_POSTGRES")
         }
+
+
 
         Properties {
             condition: qbs.targetOS.contains("windows")
@@ -111,7 +117,7 @@ Project {
             name: "3rd-party C++ Sources"
             prefix: stellar_qbs_module.rootDirectory + "/lib"
             files:[
-                "/asio/src/asio.cpp",
+                "/asio/asio/src/asio.cpp",
                 "/json/jsoncpp.cpp",
                 "/http/*.cpp",
                 "/util/*.c*"            ]
@@ -126,6 +132,7 @@ Project {
         }
 
         Group {
+            name: "StellarCoreVersion.cpp"
             files: stellarCoreVersion
             fileTags: "corever_template"
         }

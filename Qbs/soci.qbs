@@ -11,7 +11,7 @@ Project {
 
         cpp.windowsApiCharacterSet: "mbcs"
 
-        files: [baseDirectory+"/sqlite3.c"]
+        files: [baseDirectory+"/*.c"]
         Export {
             Depends {name: "cpp"}
             cpp.windowsApiCharacterSet: "mbcs"
@@ -44,8 +44,8 @@ Project {
         Depends{name: "libsoci"}
         readonly property path baseDirectory: stellar_qbs_module.rootDirectory + "/lib/soci"
         readonly property path srcDirectory: baseDirectory + "/src/backends/postgresql"
+        property bool condition: stellar_qbs_module.usePostgres && stellar_qbs_module.libpq.found
 
-        stellar_qbs_module.usePostgres: true
         property var x: {
             console.warn("libsoci-pgsql: found libpq :"+stellar_qbs_module.libpq.found)
         }

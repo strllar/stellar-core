@@ -63,6 +63,8 @@ Project {
         Depends {name: "stellar_qbs_module"}
         Depends {name: "build_endian_header"}
         readonly property path baseDirectory: stellar_qbs_module.rootDirectory + "/lib/xdrpp"
+        readonly property path targetBinPath: destinationDirectory
+        readonly property string cpreprocessor: "cpp"
 
         Properties {
             condition: qbs.targetOS.contains("windows")
@@ -73,6 +75,12 @@ Project {
             condition: qbs.targetOS.contains("unix")
             cpp.includePaths: [baseDirectory, destinationDirectory]
         }
+        Properties {
+            condition: qbs.targetOS.contains("darwin")
+            targetBinPath: destinationDirectory + "/" + targetName + ".app/Contents/MacOS"
+            cpreprocessor: "cc -xc -E -P"
+        }
+
         Rule {
             multiplex: true
             condition: qbs.targetOS.contains("unix")
@@ -85,7 +93,7 @@ Project {
                 cmd.description = "generating config.h";
                 cmd.highlight = "codegen";
                 cmd.sourceCode = function() {
-                    var content = "\n#define CPP_COMMAND \"cpp\" \n#define PACKAGE \"xdrpp\"\n#define PACKAGE_NAME \"xdrpp\"\n#define PACKAGE_VERSION \"0\"\n#define WORDS_BIGENDIAN 0\n",
+                    var content = "\n#define CPP_COMMAND \""+product.cpreprocessor+"\" \n#define PACKAGE \"xdrpp\"\n#define PACKAGE_NAME \"xdrpp\"\n#define PACKAGE_VERSION \"0\"\n#define WORDS_BIGENDIAN 0\n",
                     file = new TextFile(output.filePath, TextFile.WriteOnly);
                     file.truncate();
                     file.write(content);
