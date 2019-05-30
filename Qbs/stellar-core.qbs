@@ -1,6 +1,7 @@
 import qbs
 import qbs.FileInfo
 import qbs.TextFile
+import qbs.Process
 
 Project {
 
@@ -26,19 +27,14 @@ Project {
 
         Rule {
             inputs: "xdr-file"
+            explicitlyDependsOnFromDependencies: ["application"]
 
             Artifact {
                 filePath: "xdr/"+input.fileName.replace(/\.x$/, ".h")
                 fileTags: ["hpp"]
             }
             prepare: {
-                var xdrc;
-                for (var i in product.dependencies) {
-                    var dep = product.dependencies[i];
-                    if (dep.name != "xdrc")
-                        continue;
-                    xdrc = dep.targetBinPath + "/" + dep.targetName;
-                }
+                var xdrc = explicitlyDependsOn["application"][0].filePath
                 var cmd = new Command(xdrc, ["-hh", "-o", output.filePath, input.filePath])
                 cmd.description = "xdrc " + input.filePath
                 return cmd
@@ -59,11 +55,25 @@ Project {
 
         property stringList moredefs: ["BUILD_TESTS"]
 
+        Probe {
+            id: revprobe
+            property string revision
+            readonly property path gitRoot: stellar_qbs_module.rootDirectory
+
+            configure: {
+                revision = "stellar-qbs-head";
+                var p = new Process();
+                p.setWorkingDirectory(gitRoot)
+                if (p.exec("git", ["describe", "--tags", "--abbrev=6"]) === 0)
+                    revision = p.readStdOut().trim();
+                console.warn("codebase revision: " + revision)
+            }
+        }
+
         property var x: {
             console.warn("stellar-core : use libpq : "+ libsoci_pgsql.present)
             console.warn("stellar-core : std : "+ cpp.cxxLanguageVersion)
             console.warn("stellar-core : defines : "+ cpp.defines)
-
         }
 
         cpp.includePaths: [
@@ -133,11 +143,12 @@ Project {
 
         Group {
             name: "StellarCoreVersion.cpp"
-            files: stellarCoreVersion
+            files: stellarCoreVersionFile
             fileTags: "corever_template"
         }
 
-        readonly property path stellarCoreVersion: stellar_qbs_module.rootDirectory + "/src/main" +"/StellarCoreVersion.cpp.in"
+        readonly property string stellarCoreVersion: revprobe.revision
+        readonly property path stellarCoreVersionFile: stellar_qbs_module.rootDirectory + "/src/main" +"/StellarCoreVersion.cpp.in"
 
         Rule {
             inputs: ["corever_template"]
@@ -159,7 +170,7 @@ Project {
                     if (onWindows)
                         content = content.replace(/\r\n/g, "\n");
 
-                    content = content.replace(/%%VERSION%%/, "sp-9.2.0")
+                    content = content.replace(/%%VERSION%%/, product.stellarCoreVersion)
 
                     file = new TextFile(output.filePath, TextFile.WriteOnly);
                     file.truncate();

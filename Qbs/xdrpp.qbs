@@ -63,7 +63,6 @@ Project {
         Depends {name: "stellar_qbs_module"}
         Depends {name: "build_endian_header"}
         readonly property path baseDirectory: stellar_qbs_module.rootDirectory + "/lib/xdrpp"
-        readonly property path targetBinPath: destinationDirectory
         readonly property string cpreprocessor: "cpp"
 
         Properties {
@@ -77,7 +76,6 @@ Project {
         }
         Properties {
             condition: qbs.targetOS.contains("darwin")
-            targetBinPath: destinationDirectory + "/" + targetName + ".app/Contents/MacOS"
             cpreprocessor: "cc -xc -E -P"
         }
 
