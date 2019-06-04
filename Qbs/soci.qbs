@@ -9,6 +9,10 @@ Project {
         Depends{name: "stellar_qbs_module"}
         readonly property path baseDirectory: stellar_qbs_module.rootDirectory + "/lib/sqlite"
 
+
+        Properties {
+            cpp.defines: ["SQLITE_CORE", "SQLITE_OMIT_LOAD_EXTENSION"].concat(outer)
+        }
         cpp.windowsApiCharacterSet: "mbcs"
 
         files: [baseDirectory+"/*.c"]
